@@ -1,23 +1,14 @@
-# Secrets & runtime state — never commit
-config.json
-keys/
-.sessions.json
-*.db
-*.db-wal
-*.db-shm
-
-# Logs
-*.log
-*.log.*
+inbox.db
 backend*.log
-
-# Runtime artifacts
+.sessions.json
+keys/
+config.json
+__pycache__/
+# Фаза 3: бандл и собранный index.html — артефакты сборки (пересобираются build.py)
+static/index.html
+static/app.*.js
+static/app.*.css
+static/app.tmp.js
 test_runtime/
 uploads/
 tmp/
-__pycache__/
-.pytest_cache/
-*.pyc
-
-# Local OS noise
-.DS_Store

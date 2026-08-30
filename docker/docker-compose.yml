@@ -1,0 +1,21 @@
+# Docker Compose — Nostr Mail Bridge
+# 1) cp web/config.example.json web/config.json  → вписать nsec_hex, домен, пароль
+# 2) docker compose up -d --build
+# 3) проверить: curl http://localhost:8123/api/status
+services:
+  mail:
+    build: .
+    container_name: nostr-mail-bridge
+    restart: unless-stopped
+    ports:
+      - "8123:8123"
+    volumes:
+      - ./web/config.json:/app/web/config.json:ro
+      - ./data:/app/data
+    environment:
+      - PYTHONPATH=/app/src
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8123/api/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

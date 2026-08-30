@@ -1,12 +1,10 @@
-# SNIN Mail web-client — Python dependencies
-fastapi>=0.115
-uvicorn>=0.30
-cryptography>=42
-requests>=2.31
-
-# The client talks to the Nostr network through the `mailbridge` package
-# (nostr-mail-bridge: https://github.com/konantgit-sys/nostr-mail-bridge).
-# It is imported at runtime, so add its src/ to PYTHONPATH:
-#
-#   git clone https://github.com/konantgit-sys/nostr-mail-bridge.git
-#   export PYTHONPATH=$PWD/nostr-mail-bridge/src:$PWD/nostr-mail-bridge/deps
+# SNIN Mail — Python dependencies
+# Установка: pip3 install -r requirements.txt
+# Запуск: uvicorn app:app (ядро mailbridge импортируется из корня)
+fastapi>=0.110.0
+uvicorn>=0.29.0
+websocket-client>=1.8.0
+requests>=2.31.0
+cryptography>=42.0.0
+secp256k1==0.14.0
+pycryptodome==3.23.0
