@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SNIN Mail</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M13 2L3 14h7l-2 8 10-12h-7l2-8z' fill='%2300e0f0'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/inter@5/index.min.css">
+<meta name="theme-color" content="#060b14">
+<meta name="description" content="SNIN Mail — приватная децентрализованная почта поверх Nostr (kind:1301, NIP-59)">
+__CSS__
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</head>
+<body>
+<div class="aurora-layer aurora-a" aria-hidden="true"></div>
+<div class="aurora-layer aurora-b" aria-hidden="true"></div>
+<div class="aurora-layer aurora-c" aria-hidden="true"></div>
+<div class="app" id="app">
+
+  <!-- Шапка -->
+  <header class="header">
+    <div class="logo">
+      <svg class="logo-bolt" width="30" height="30" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L3 14h7l-2 8 10-12h-7l2-8z" fill="currentColor"/></svg>
+      <div class="logo-text">
+        <span class="logo-title">SNIN<span class="logo-badge">MAIL</span></span>
+        <button class="logo-sub" id="mail-address" title="Скопировать адрес">—</button>
+      </div>
+    </div>
+    <div class="header-right">
+      <button class="account-trigger" id="account-trigger" title="Переключить почтовый ящик" hidden>
+        <span class="account-avatar" id="account-trigger-avatar">?</span>
+        <span class="account-trigger-name" id="account-trigger-name">Ящик</span>
+        <svg class="account-caret" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <span class="ln" id="ln-badge" title="Lightning-адрес"><svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L3 14h7l-2 8 10-12h-7l2-8z" fill="currentColor"/></svg><span id="ln-addr">—</span></span>
+      <button class="btn btn-ghost btn-help" id="btn-help" title="Инструкция" aria-label="Инструкция">?</button>
+      <button class="btn btn-ghost" id="btn-logout" hidden>Выйти</button>
+    </div>
+  </header>
+
+  <!-- Выбор ящика (модалка) -->
+  <div class="account-backdrop" id="account-backdrop" hidden></div>
+  <div class="account-modal" id="account-modal" role="dialog" aria-label="Выбор почтового ящика" hidden>
+    <div class="account-modal-head">
+      <span>Почтовые ящики</span>
+      <span class="account-modal-count" id="account-modal-count"></span>
+    </div>
+    <div class="account-modal-list" id="account-modal-list"></div>
+  </div>
+
+  <!-- Логин -->
+  <section class="login" id="login-view">
+    <form class="login-card reveal" id="login-form">
+      <div class="login-icon" aria-hidden="true">
+        <svg width="36" height="36" viewBox="0 0 24 24"><path d="M13 2L3 14h7l-2 8 10-12h-7l2-8z" fill="currentColor"/></svg>
+      </div>
+      <h1>Вход в почту</h1>
+      <p class="muted">SNIN Mail — приватная почта в Nostr</p>
+      <div class="login-mode" role="tablist" aria-label="Способ входа">
+        <button type="button" class="mode-btn active" id="mode-pass" role="tab" aria-selected="true">По паролю</button>
+        <button type="button" class="mode-btn" id="mode-nsec" role="tab" aria-selected="false">По nsec</button>
+      </div>
+      <input type="text" id="login-addr" class="input" placeholder="npub или адрес (npub@домен)" autocomplete="username" autofocus>
+      <input type="password" id="login-pass" class="input" placeholder="Пароль" autocomplete="current-password">
+      <input type="password" id="login-nsec" class="input" placeholder="nsec1… (приватный ключ)" autocomplete="off" hidden>
+      <button class="btn btn-primary btn-block" type="submit">Войти</button>
+      <button class="btn btn-ghost btn-block" type="button" id="btn-show-register">Зарегистрировать ящик</button>
+      <button class="btn btn-link btn-block" type="button" id="btn-show-reset">Забыли пароль?</button>
+      <button class="btn btn-link btn-block" type="button" id="btn-help-login"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> Как пользоваться SNIN Mail</button>
+      <p class="error" id="login-error" hidden></p>
+    </form>
+  </section>
+
+  <!-- Сброс пароля -->
+  <section class="login" id="reset-view" hidden>
+    <form class="login-card" id="reset-form">
+      <div class="login-icon" aria-hidden="true">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      </div>
+      <h1>Сброс пароля</h1>
+      <p class="muted">Подтверди владение ключом (nsec) — и задай новый пароль</p>
+      <input type="text" id="reset-addr" class="input" placeholder="Адрес (npub@домен)">
+      <input type="text" id="reset-nsec" class="input" placeholder="nsec1…" autocomplete="off">
+      <input type="password" id="reset-pass" class="input" placeholder="Новый пароль (мин. 6)" autocomplete="new-password">
+      <button class="btn btn-primary btn-block" type="submit">Сбросить пароль</button>
+      <button class="btn btn-ghost btn-block" type="button" id="btn-reset-back">← Вход</button>
+      <p class="error" id="reset-error" hidden></p>
+    </form>
+  </section>
+
+  <!-- Регистрация -->
+  <section class="login" id="register-view" hidden>
+    <form class="login-card" id="register-form">
+      <div class="login-icon" aria-hidden="true">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M6 21v-1a6 6 0 0 1 12 0v1"/></svg>
+      </div>
+      <h1>Регистрация ящика</h1>
+      <p class="muted">SNIN Mail — твой адрес <code>npub…@snin-mail.v2.site</code>. Приватный ключ (nsec) остаётся у тебя: мост использует его только для расшифровки твоих писем</p>
+      <input type="text" id="reg-nsec" class="input" placeholder="nsec1…" autocomplete="off">
+      <input type="text" id="reg-label" class="input" placeholder="Имя (необязательно)">
+      <input type="password" id="reg-pass" class="input" placeholder="Пароль (необязательно, мин. 6)" autocomplete="new-password">
+      <button class="btn btn-primary btn-block" type="submit">Создать ящик</button>
+      <button class="btn btn-ghost btn-block" type="button" id="btn-show-login">← Вход</button>
+      <p class="error" id="register-error" hidden></p>
+    </form>
+  </section>
+
+  <!-- Почта -->
+  <main class="main" id="main-view" hidden>
+    <div class="toolbar">
+      <div class="tabs">
+        <button class="tab active" data-tab="inbox" id="tab-inbox">Входящие <span class="badge" id="inbox-count" hidden>0</span></button>
+        <button class="tab" data-tab="outbox" id="tab-outbox">Отправленные</button>
+        <button class="tab" data-tab="drafts" id="tab-drafts">Черновики</button>
+        <button class="tab" data-tab="archive" id="tab-archive">Архив</button>
+        <button class="tab" data-tab="imap" id="tab-imap">Входящие (IMAP)</button>
+      </div>
+      <div class="toolbar-right">
+        <div class="search" id="search-wrap">
+          <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="search" id="search" class="input search-input" placeholder="Поиск…" autocomplete="off">
+        </div>
+        <button class="btn btn-primary" id="btn-compose">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          Написать
+        </button>
+      </div>
+    </div>
+
+    <!-- Hero: приветствие + статистика ящика (Фаза 2) -->
+    <section class="hero" id="hero-view" hidden>
+      <div class="hero-top">
+        <div class="hero-greet">
+          <p class="hero-kicker">SNIN Mail</p>
+          <h1 class="hero-title" id="hero-title">Добро пожаловать</h1>
+          <p class="hero-addr" id="hero-addr">—</p>
+        </div>
+      </div>
+      <div class="hero-stats">
+        <div class="stat-card" style="--i:0">
+          <span class="stat-num" id="stat-unread">—</span>
+          <span class="stat-label">Непрочитанных</span>
+        </div>
+        <div class="stat-card" style="--i:1">
+          <span class="stat-num" id="stat-total">—</span>
+          <span class="stat-label">Писем в ящике</span>
+        </div>
+        <div class="stat-card" style="--i:2">
+          <span class="stat-num" id="stat-sent">—</span>
+          <span class="stat-label">Отправлено</span>
+        </div>
+        <div class="stat-card" style="--i:3">
+          <span class="stat-num" id="stat-relays">—</span>
+          <span class="stat-label">Релеев</span>
+        </div>
+      </div>
+      <div class="hero-recent reveal" id="hero-recent" hidden>
+        <div class="hero-recent-head">
+          <span>Последние письма</span>
+        </div>
+        <div class="hero-recent-list" id="hero-recent-list"></div>
+      </div>
+    </section>
+
+    <!-- Список -->
+    <section class="list" id="list-view">
+      <div class="list-filters" id="list-filters" hidden>
+        <div class="seg" role="tablist" aria-label="Фильтр писем">
+          <button class="seg-btn active" data-filter="all" id="f-all" aria-selected="true">Все</button>
+          <button class="seg-btn" data-filter="unread" id="f-unread" aria-selected="false">Непрочитанные</button>
+          <button class="seg-btn" data-filter="attach" id="f-attach" aria-selected="false">С вложениями</button>
+        </div>
+        <button class="btn btn-ghost btn-clean" id="btn-clean" title="Удалить все прочитанные письма из этого ящика">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          Очистить прочитанные
+        </button>
+        <button class="btn btn-ghost btn-clean btn-refresh" id="btn-refresh" title="Обновить список">
+          <svg class="icon-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15.36-6.36L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.36 6.36L3 16"/><path d="M3 21v-5h5"/></svg>
+          <span class="btn-refresh-label">Обновить</span>
+        </button>
+      </div>
+      <div class="empty reveal" id="empty-inbox" hidden>
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="m22 6-10 7L2 6"/></svg>
+        <p>Писем пока нет. Напишите Крайтеру на<br><code id="empty-addr">—</code></p>
+      </div>
+      <div class="empty" id="empty-search" hidden>
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <p>Ничего не найдено</p>
+      </div>
+      <div class="mail-list" id="mail-list"></div>
+      <button class="btn btn-ghost btn-more" id="btn-more" hidden>Загрузить ещё</button>
+    </section>
+
+    <!-- Письмо -->
+    <section class="detail" id="detail-view" hidden>
+      <div class="detail-top">
+        <button class="btn btn-ghost" id="btn-back">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+          Назад
+        </button>
+        <div class="detail-actions">
+          <button class="btn btn-ghost" id="btn-archive">В архив</button>
+          <button class="btn btn-ghost" id="btn-unread">Не прочитано</button>
+          <button class="btn btn-ghost btn-danger" id="btn-delete">Удалить</button>
+        </div>
+      </div>
+      <article class="mail-card" id="mail-card"></article>
+      <div class="detail-actions bottom">
+        <button class="btn btn-ghost" id="btn-forward">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+          Переслать
+        </button>
+        <button class="btn btn-primary" id="btn-reply">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 11 18-7-7 18-2.5-7.5L3 11Z"/><path d="m11.5 14.5 4-4"/></svg>
+          Ответить
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <!-- IMAP: входящие из обычной почты (каждый подключает свой ящик) -->
+  <section class="imap-settings" id="imap-view" hidden>
+    <div class="imap-card">
+      <h2 class="imap-title">Входящие из обычной почты (IMAP)</h2>
+      <p class="imap-sub">Подключи любой IMAP-ящик (mail.ru, yandex.ru и др.) — его письма будут приходить прямо в этот SNIN-ящик. Нужен «пароль для внешних приложений» (app-пароль), не обычный.</p>
+      <form id="imap-form" class="imap-form">
+        <label class="imap-field">Хост
+          <input type="text" id="imap-host" class="input" placeholder="imap.mail.ru" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="imap-row">
+          <label class="imap-field imap-narrow">Порт
+            <input type="number" id="imap-port" class="input" value="993" min="1" max="65535">
+          </label>
+          <label class="imap-check">
+            <input type="checkbox" id="imap-ssl" checked> SSL
+          </label>
+        </div>
+        <label class="imap-field">Логин (email)
+          <input type="text" id="imap-user" class="input" placeholder="you@mail.ru" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="imap-field">App-пароль
+          <input type="password" id="imap-pass" class="input" placeholder="пароль для внешних приложений" autocomplete="new-password">
+        </label>
+        <div class="imap-actions">
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+          <button type="button" class="btn btn-ghost btn-danger" id="imap-delete">Отключить</button>
+        </div>
+      </form>
+      <div class="imap-status" id="imap-status"></div>
+      <p class="imap-hint">Доставка: IMAP → шифрованное письмо (NIP-59) → релеи → ваш ящик. Проверка каждые 2 минуты.</p>
+    </div>
+  </section>
+
+  <!-- Композер -->
+  <div class="modal-backdrop" id="compose-backdrop" hidden>
+    <form class="compose" id="compose-form">
+      <div class="compose-head">
+        <h2 id="compose-title">Новое письмо</h2>
+        <button type="button" class="btn-icon" id="btn-close" aria-label="Закрыть">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      <div class="compose-from" id="compose-from"></div>
+      <input type="text" id="compose-to" class="input" placeholder="Кому: npub… или npub…@домен" autocomplete="off" spellcheck="false">
+      <input type="text" id="compose-subject" class="input" placeholder="Тема" autocomplete="off" maxlength="200">
+      <textarea id="compose-body" class="input textarea" placeholder="Текст письма…" rows="9" maxlength="20000"></textarea>
+      <div class="compose-attachments" id="compose-attachments"></div>
+      <div class="compose-progress" id="compose-progress" hidden>
+        <div class="compose-progress-bar" id="compose-progress-bar"></div>
+        <span class="compose-progress-text" id="compose-progress-text"></span>
+      </div>
+      <div class="compose-actions">
+        <span class="compose-hint" id="compose-hint">SNIN Mail · NIP-44 → gift wrap → релеи</span>
+        <button type="button" class="btn btn-ghost" id="btn-attach">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          Прикрепить
+        </button>
+        <input type="file" id="attach-input" multiple hidden>
+        <button type="button" class="btn btn-ghost" id="btn-cancel">Отмена</button>
+        <button type="submit" class="btn btn-primary" id="btn-send">Отправить</button>
+      </div>
+      <p class="error" id="compose-error" hidden></p>
+    </form>
+  </div>
+
+  <!-- Инструкция -->
+  <div class="modal-backdrop" id="help-backdrop" hidden>
+    <div class="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title">
+      <div class="compose-head">
+        <h2 id="help-title">Как пользоваться SNIN Mail</h2>
+        <button type="button" class="btn-icon" id="btn-help-close" aria-label="Закрыть">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      <div class="help-body">
+        <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg> Вход</h3>
+        <p>Открой <code>snin-mail.v2.site</code> → введи свой адрес <code>npub…@snin-mail.v2.site</code> и пароль. Адрес можно вводить и просто как <code>npub…</code>.</p>
+        <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg> Регистрация ящика</h3>
+        <p>«Зарегистрировать ящик» → свой <code>nsec1…</code> + пароль (необязательно). Ключ остаётся у тебя: мост использует его только для расшифровки твоих писем. С одним ключом — один ящик.</p>
+        <p><strong>Вход двумя способами:</strong> по адресу + паролю (удобно каждый день) ИЛИ сразу по <code>nsec</code> — переключатель на форме входа, как в NostrMail. Ключ заменяет и логин, и пароль: из него вычисляется твой адрес. Без пароля вход только по ключу.</p>
+        <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Забыл пароль</h3>
+        <p>«Забыли пароль?» → адрес + <code>nsec1…</code> + новый пароль. nsec доказывает, что ключ твой: чужим ключом пароль не сбросить.</p>
+        <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg> Письма</h3>
+        <p>Письмо = событие <code>kind:1301</code> в Nostr, шифруется NIP-44 и упаковывается в gift wrap (NIP-59). Никто кроме получателя не видит ни текст, ни тему, ни отправителя. Вложения до 5 МБ, до 5 штук.</p>
+        <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h7l-2 8 10-12h-7l2-8z"/></svg> Квоты</h3>
+        <p>Ящик: до 500 писем. Отправка: до 100 писем/сутки. Сверх лимита — письмо не пройдёт.</p>
+        <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> Безопасность</h3>
+        <p>Вход — только по паролю, сессия на сервере. Чужая cookie не пускает. Сброс пароля — только по владению ключом. Лимит регистраций: 50/час.</p>
+        <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Внешние клиенты</h3>
+        <p>Мост зарегистрирован по NIP-05 (<code>_smtp@snin-mail.v2.site</code>) — совместимые клиенты (nostrmail.org и др.) могут находить и писать на адреса <code>@snin-mail.v2.site</code>.</p>
+        <button type="button" class="btn btn-primary btn-block" id="btn-help-close2" style="margin-top:18px;padding:11px;font-size:14px;font-weight:600;">Понятно, закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</div>
+
+
+
+
+
+
+__JS__
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</body>
+</html>

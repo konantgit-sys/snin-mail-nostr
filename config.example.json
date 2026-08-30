@@ -1,0 +1,26 @@
+{
+  "nsec_hex": "PASTE_MAIN_NSEC",
+  "pubkey_hex": "PASTE_PUBKEY",
+  "npub": "npub1...",
+  "mail_domain": "snin-mail.v2.site",
+  "mail_address": "npub1...@snin-mail.v2.site",
+  "relays": [
+    "wss://nos.lol",
+    "wss://offchain.pub",
+    "wss://relay.primal.net"
+  ],
+  "db": "./inbox.db",
+  "accounts_file": "./.secure/mail_accounts.json",
+  "telegram_token": "",
+  "telegram_chat_id": "",
+  "lightning": "brashfoster340@walletofsatoshi.com",
+  "auth_password": "CHANGE_ME",
+  "owners": [],
+  "limits": {
+    "max_mails_per_user": 500,
+    "max_send_per_day": 100,
+    "max_attachment_size_mb": 5,
+    "max_attachments_per_mail": 5,
+    "max_mail_body": 20000
+  }
+}

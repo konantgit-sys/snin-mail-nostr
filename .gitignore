@@ -1,0 +1,23 @@
+# Secrets & runtime state — never commit
+config.json
+keys/
+.sessions.json
+*.db
+*.db-wal
+*.db-shm
+
+# Logs
+*.log
+*.log.*
+backend*.log
+
+# Runtime artifacts
+test_runtime/
+uploads/
+tmp/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Local OS noise
+.DS_Store
