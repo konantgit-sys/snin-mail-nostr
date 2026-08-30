@@ -16,7 +16,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest
+        run: pip install -r requirements.txt pytest httpx2
 
       - name: Clone nostr-mail-bridge (mailbridge package)
         run: git clone --depth 1 https://github.com/konantgit-sys/nostr-mail-bridge.git /tmp/nostr-mail-bridge
