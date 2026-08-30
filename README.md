@@ -1,129 +1,135 @@
-# SNIN Mail — веб-клиент (cryter-mail-web)
+# SNIN Mail — Web Client
 
-Децентрализованная почта поверх Nostr: письма — это NIP-59 gift-wrap события,
-хранение — ваши ключи, вложения — Blossom (NIP-96). Клиент: FastAPI-бэкенд
-+ esbuild-бандл фронта, дизайн в стиле SNIN Network.
+[![CI](https://img.shields.io/github/actions/workflow/status/konantgit-sys/snin-mail-nostr/tests.yml?branch=main&label=CI)](https://github.com/konantgit-sys/snin-mail-nostr/actions)
+[![Tests](https://img.shields.io/badge/tests-115%20passed-00e0f0)](tests/)
+[![Python](https://img.shields.io/badge/python-3.11-3776AB)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
-## Возможности
+**Decentralized email on the Nostr protocol.** Messages are NIP-59 gift-wrap
+events; storage is your keys; attachments go to Blossom (NIP-96). A FastAPI
+backend + an esbuild-bundled frontend in the SNIN Network visual style
+(aurora background, glass panels, neon #00e0f0).
 
-- **NIP-59** — письма шифруются на ключах отправителя/получателя (gift wrap)
-- **Мульти-ящик** — 24+ аккаунта в одном клиенте, переключение в шапке
-- **Вложения Blossom** — чанковая загрузка, превью, прогресс (NIP-96)
-- **IMAP-мост** — импорт/чтение внешних ящиков
-- **Черновики** — автосохранение при закрытии композера (`drafts`)
-- **Архив** — папка архивных писем (`archived`)
-- **Очередь доставки** — мост → очередь → воркеры; письмо переживает рестарт
-- **Премиум-дизайн** — aurora-фон, glass-панели, неон #00e0f0, mobile-first
+Self-hosted, private, censorship-resistant mail. Mailboxes look like
+`npub…@your-domain`.
 
-## Архитектура
+## Screenshots
+
+| Login | Inbox | Message |
+|---|---|---|
+| ![Login](docs/screenshots/login.png) | ![Inbox](docs/screenshots/inbox.png) | ![Message](docs/screenshots/detail.png) |
+
+## Features
+
+- **NIP-59** — messages are encrypted on sender/receiver keys (gift wrap)
+- **Multi-mailbox** — 24+ accounts in one client, switch in the header
+- **Blossom attachments** — chunked upload, previews, progress (NIP-96)
+- **IMAP bridge** — import/read external mailboxes
+- **Drafts** — autosave when the composer closes (`drafts`)
+- **Archive** — archived folder (`archived`)
+- **Delivery queue** — bridge → queue → workers; a message survives restarts
+- **Premium design** — aurora background, glass panels, neon #00e0f0, mobile-first
+
+## Architecture
 
 ```
-Браузер ──> :8123 FastAPI (uvicorn, 2 воркера)
+Browser ──> :8123 FastAPI (uvicorn, 2 workers)
               ├─ routers/mail.py     — API: login, mails, send, drafts, archive
-              ├─ routers/blossom.py  — NIP-96: загрузка вложений, чанки
-              ├─ routers/imap.py     — IMAP-мост
-              ├─ mailapp/queue.py    — очередь событий (SQLite)
-              ├─ mailapp/worker.py   — расшифровка NIP-59 вне WS-периметра
-              └─ mailapp/bridge.py   — подписчик релеев (отдельный процесс)
-Статика: static/index.html + app.<hash>.js/css (esbuild, long-cache)
+              ├─ routers/blossom.py  — NIP-96: attachment upload, chunks
+              ├─ routers/imap.py     — IMAP bridge
+              ├─ mailapp/queue.py    — event queue (SQLite)
+              ├─ mailapp/worker.py   — NIP-59 decryption outside the WS perimeter
+              └─ mailapp/bridge.py   — relay subscriber (separate process)
+Static: static/index.html + app.<hash>.js/css (esbuild, long-cache)
 ```
 
-Три процесса (start.sh): **bridge** (подписка, без ключей) → **worker** (расшифровка)
-→ **uvicorn** (API). Ключи — только в воркере, из БД `mail_keys` (зашифрованы master.key).
+Three processes (`start.sh`): **bridge** (subscription, no keys) → **worker**
+(decryption) → **uvicorn** (API). Keys live only in the worker, stored in
+`mail_keys` (encrypted with master.key).
 
-## Быстрый старт
+## Dependency: nostr-mail-bridge
+
+The client talks to the Nostr network through the `mailbridge` package
+([konantgit-sys/nostr-mail-bridge](https://github.com/konantgit-sys/nostr-mail-bridge)),
+imported at runtime. Add its `src/` to `PYTHONPATH`:
 
 ```bash
-# 1. Конфиг (пример → боевой)
-cp config.example.json config.json   # заполнить nsec/pubkey/relays/db
-
-# 2. Бэкенд
-python3 -m uvicorn app:app --port 8123
-
-# 3. Фронт (сборка бандла после правок static/js/*)
-python3 build.py
-
-# 4. Тесты (самодостаточные: config.json генерируется автоматически)
-python3 -m pytest tests/ -q          # 93 passed
+git clone https://github.com/konantgit-sys/nostr-mail-bridge.git
+export PYTHONPATH=$PWD/nostr-mail-bridge/src:$PWD/nostr-mail-bridge/deps
 ```
 
-**Самодостаточность тестов:** в свежем клоне без `config.json` conftest.py сам
-создаёт тестовый конфиг (случайная парная пара nsec/pubkey, локальная БД,
-relays пустые). Боевой config.json не перезаписывается. Для изоляции тесты
-monkeypatch'ят cfg.DB/сессии на временные файлы.
+Or set `NOSTR_MAIL_BRIDGE_SRC=/path/to/nostr-mail-bridge/src` — tests pick it up too.
+
+## Quick start
+
+```bash
+# 1. Config (example → real)
+cp config.example.json config.json   # fill nsec/pubkey/relays/db
+
+# 2. Backend
+python3 -m uvicorn app:app --port 8123
+
+# 3. Frontend (rebuild bundle after editing static/js/*)
+python3 build.py                     # needs esbuild (npm install esbuild)
+
+# 4. Tests (self-contained: conftest generates config.json automatically)
+python3 -m pytest tests/ -q          # 115 passed
+```
+
+**Self-contained tests:** in a fresh clone without `config.json`, conftest.py
+creates a test config itself (random paired nsec/pubkey, local DB, empty
+relays). The production config.json is never overwritten.
 
 ## CLI
 
 ```bash
-# health / статус
-python3 scripts/mail_cli.py health
-python3 scripts/mail_cli.py status
-
-# письма
-python3 scripts/mail_cli.py list                      # входящие
-python3 scripts/mail_cli.py list --folder archive     # архив
-python3 scripts/mail_cli.py list --folder outbox      # исходящие
-python3 scripts/mail_cli.py read 42                   # деталь + тело
-
-# отправка (админ-пароль из config.json или MAIL_PASSWORD)
-python3 scripts/mail_cli.py send --to npub1…@snin-mail.v2.site \
-    --subject "Привет" --body "Текст" [--attach file.png]
-
-# черновик (создать/обновить/удалить)
-python3 scripts/mail_cli.py draft --subject "Черновик" --body "…"
-python3 scripts/mail_cli.py draft --id 3 --delete
-
-# архив
-python3 scripts/mail_cli.py archive 42                # в архив
-python3 scripts/mail_cli.py archive 42 --unarchive    # из архива
+python3 scripts/mail_cli.py health                    # metrics
+python3 scripts/mail_cli.py list                      # inbox
+python3 scripts/mail_cli.py list --folder archive     # archive
+python3 scripts/mail_cli.py list --folder outbox      # sent
+python3 scripts/mail_cli.py read 42                   # detail + body
+python3 scripts/mail_cli.py send --to npub1…@your-domain \
+    --subject "Hello" --body "Text" [--attach file.png]
+python3 scripts/mail_cli.py draft --subject "Draft" --body "…"
+python3 scripts/mail_cli.py archive 42                # to archive
 ```
 
-Параметры: `--url http://localhost:8123`, `--password` (или env `MAIL_PASSWORD`),
-`--token` (env `MAIL_TOKEN`, переиспользуется кэш в `~/.cache/mail_cli_token`).
+Options: `--url http://localhost:8123`, `--password` (or env `MAIL_PASSWORD`),
+`--token` (env `MAIL_TOKEN`; token cached in `~/.cache/mail_cli_token`).
 
-## API (основное)
+## API
 
-| Метод | Путь | Назначение |
+| Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/login` | вход (nsec или пароль) → token |
-| GET | `/api/mails?folder=` | список (inbox/archive), кэш 5с |
-| GET | `/api/mails/{id}` | деталь + прочитано |
-| POST | `/api/mails/{id}/read` | прочитано/непрочитано |
+| POST | `/api/login` | login (nsec or password) → token |
+| GET | `/api/mails?folder=` | list (inbox/archive), 5s cache |
+| GET | `/api/mails/{id}` | detail + mark read |
+| POST | `/api/mails/{id}/read` | read/unread |
 | POST | `/api/mails/{id}/archive` | `{"archived": true\|false}` |
-| DELETE | `/api/mails/{id}` | удалить |
-| POST | `/api/send` | отправить |
-| POST | `/api/drafts` | сохранить черновик |
-| GET | `/api/outbox` | исходящие |
-| POST | `/api/blossom/upload` | вложение (NIP-96) |
-| GET | `/api/health` | метрики: RAM, БД, очередь |
+| DELETE | `/api/mails/{id}` | delete |
+| POST | `/api/send` | send |
+| POST | `/api/drafts` | save draft |
+| GET | `/api/outbox` | sent |
+| POST | `/api/blossom/upload` | attachment (NIP-96) |
+| GET | `/api/health` | RAM, DB, queue metrics |
 
-Авторизация: `Authorization: Bearer <token>` (cookie игнорируются — прокси кеширует Set-Cookie).
+Auth: `Authorization: Bearer <token>` (cookies are ignored — the v2.site
+proxy caches Set-Cookie).
 
-## Деплой (v2.site)
-
-- `start.sh` — flock + pkill-якорь: ровно 1 мост, 1 uvicorn, 1 воркер
-- `logrotate.conf` — ротация backend/bridge/imap логов (daily, 7)
-- `scripts/backup_mail.sh` — бэкап inbox.db + config (KEEP=14)
-- `scripts/mail_health_monitor.py` — алерты в Octopus (RAM≥93%, диск≥85%, очередь)
-- `scripts/cleanup_caches.py` — чистка uploads/tmp/media (ежедневно)
-
-## Структура
+## Repository layout
 
 ```
-app.py                     — точка входа uvicorn
-build.py                   — esbuild-сборка фронта (fingerprint-бандлы)
-mailapp/                   — бэкенд: auth, bridge, config, db, queue, worker, imap_store
+app.py                     — uvicorn entry point
+build.py                   — esbuild frontend build (fingerprint bundles)
+mailapp/                   — backend: auth, bridge, config, db, queue, worker, imap_store
 mailapp/routers/           — API: mail, blossom (NIP-96), imap
-static/js/                 — исходники фронта: core, api, inbox, detail, composer, main
-static/templates/index.src.html — разметка (сборка → static/index.html)
-tests/                     — 93 теста: API, Blossom, очередь, IMAP, черновики/архив
-scripts/                   — CLI, бэкапы, монитор, чистка кэшей
-docs/REFACTORING_SPEC.md   — спека фаз 0–5
+static/js/                 — frontend sources: core, api, inbox, detail, composer, main
+static/templates/index.src.html — markup (built → static/index.html)
+tests/                     — 115 tests: API, Blossom, queue, IMAP, drafts/archive
+scripts/                   — CLI, backups, health monitor, cache cleanup
+docs/screenshots/          — screenshots used in this README
 ```
 
-## Правила разработки
+## License
 
-1. Тесты обязательны после каждой правки: `pytest` (93, зелёные)
-2. Бандлы — артефакты: после правок `static/js/*` пересобрать `build.py`
-3. Боевые секреты (config.json, keys/, .sessions.json) — в `.gitignore`
-4. Деплой и git-зеркало держим в одном состоянии (diff = 0)
+[GNU AGPL-3.0](LICENSE) — server-side software, keep the network free.
