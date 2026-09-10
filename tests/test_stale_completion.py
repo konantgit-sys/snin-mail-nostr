@@ -213,3 +213,33 @@ def test_empty_lease_never_matches_a_processing_row(queue_db):
     assert _row(queue_db, rid)[0] == "processing"
     assert q.finish(rid, False, error="empty") is False
     assert _row(queue_db, rid)[0] == "processing" and _row(queue_db, rid)[2] == 0
+
+
+def test_legacy_finish_by_id_is_not_fenced(queue_db):
+    """Upgrade boundary (external review, board seq 29693) — a documented limit.
+
+    The lease fence protects callers that run *this* `finish()`. A pre-fix
+    process still completes by `id + status='processing'` and therefore
+    overwrites the row of the current holder, and no SQL-side guard can close
+    that: the old statement never mentions the lease. Migration is therefore
+    defined to require a drained queue — see docs/DEPLOY.md, "Upgrade: stop old
+    workers before migrating". This test keeps the limit visible instead of
+    implying the fence covers it.
+    """
+    rid = q.enqueue(_ev())
+    claimed = q.claim(groups={OWNER}, worker="B")
+    assert claimed is not None and claimed["id"] == rid
+
+    # the pre-fix statement, verbatim: matched on id + status only
+    with sqlite3.connect(queue_db) as c:
+        cur = c.execute(
+            "UPDATE mail_queue SET status='done', processed_at=1, error='', lease='' "
+            "WHERE id=? AND status='processing'",
+            (rid,),
+        )
+        c.commit()
+
+    assert cur.rowcount == 1, "legacy holder still writes — that is the boundary"
+    assert _row(queue_db, rid)[0] == "done"
+    # the current holder arrives afterwards and can no longer act
+    assert q.finish(rid, True, lease=claimed["lease"]) is False

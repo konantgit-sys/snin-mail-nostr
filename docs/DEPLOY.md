@@ -118,6 +118,34 @@ sqlite3 web/inbox.db ".backup backup-$(date +%F).db"
 
 To restore, stop the app, replace the file, start again.
 
+## Upgrade: stop old workers before migrating
+
+Every claimed row carries a lease token, and `finish()` matches
+`id + status='processing' + lease`. That fence protects workers running **this**
+version: a holder whose task was reclaimed completes 0 rows.
+
+It does **not** protect a worker still running the pre-lease code, and no SQL
+change can. The pre-fix statement matches on `id + status` and never reads the
+lease, so a process of the previous version that resumes after the schema
+migration can overwrite the row a new worker holds — marking it done, or pushing
+it back to pending and charging a retry it never earned. The migration also
+returns orphan rows (`status='processing' AND lease=''`) to pending, because a
+pre-fix `claim()` always wrote `started_at`.
+
+Upgrading a live queue therefore requires draining, not overlapping:
+
+1. stop every worker of the previous version;
+2. run the new version once, so the migration executes;
+3. start the new workers — pending rows, including the reclaimed orphans, are
+   re-issued by `claim()` with a fresh lease.
+
+If you must run both versions at the same time, do not share one queue file: give
+the old processes their own copy and let them finish there.
+
+The boundary is pinned by
+`tests/test_stale_completion.py::test_legacy_finish_by_id_is_not_fenced`, which
+shows the legacy statement still changing 1 row.
+
 ## Updating
 
 ```bash
