@@ -1,103 +1,104 @@
-# SNIN Mail — Web Client
+# SNIN Mail — decentralized email on Nostr
 
-[![CI](https://img.shields.io/github/actions/workflow/status/konantgit-sys/snin-mail-nostr/tests.yml?branch=main&label=CI)](https://github.com/konantgit-sys/snin-mail-nostr/actions)
-[![Tests](https://img.shields.io/badge/tests-115%20passed-00e0f0)](tests/)
-[![Python](https://img.shields.io/badge/python-3.11-3776AB)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+Self-hosted, sovereign email built on Nostr. Messages are NIP-59 gift-wrapped
+events, encryption is NIP-44 (v2), attachments live on Blossom (NIP-96).
+Your keys, your mail, your relays — no servers, no surveillance.
 
-**Decentralized email on the Nostr protocol.** Messages are NIP-59 gift-wrap
-events; storage is your keys; attachments go to Blossom (NIP-96). A FastAPI
-backend + an esbuild-bundled frontend in the SNIN Network visual style
-(aurora background, glass panels, neon #00e0f0).
-
-Self-hosted, private, censorship-resistant mail. Mailboxes look like
-`npub…@your-domain`.
-
-## Screenshots
-
-| Login | Inbox | Message |
-|---|---|---|
-| ![Login](docs/screenshots/login.png) | ![Inbox](docs/screenshots/inbox.png) | ![Message](docs/screenshots/detail.png) |
+This repository is the **unified project**: the web client, the protocol core
+(NIP-44/59), the IMAP bridge and the Docker deploy in one place.
 
 ## Features
 
-- **NIP-59** — messages are encrypted on sender/receiver keys (gift wrap)
-- **Multi-mailbox** — 24+ accounts in one client, switch in the header
-- **Blossom attachments** — chunked upload, previews, progress (NIP-96)
-- **IMAP bridge** — import/read external mailboxes
-- **Drafts** — autosave when the composer closes (`drafts`)
+- **NIP-59 gift wrap** — sender hidden behind an ephemeral key, content
+  encrypted twice (seal → gift wrap)
+- **NIP-44 (v2)** — ECDH + HKDF + ChaCha20-Poly1305, verified against the
+  official test vectors (`docs/nip44.vectors.json`)
+- **NIP-96 Blossom** — chunked attachment upload, previews, progress
+- **Multi-mailbox** — many accounts in one client, switch in the header
+- **IMAP bridge** — import/read external mailboxes (`GUIDE-imap.md`)
+- **Delivery queue** — relay subscriber → SQLite queue → worker pool;
+  a message survives restarts, no loss on worker crash
+- **Drafts** — auto-save when the composer closes
 - **Archive** — archived folder (`archived`)
-- **Delivery queue** — bridge → queue → workers; a message survives restarts
-- **Premium design** — aurora background, glass panels, neon #00e0f0, mobile-first
+- **Docker one-command deploy** — `docker compose up -d` (`docker/`)
+- **CLI** — send, read, draft, archive from the terminal (`scripts/mail_cli.py`)
+- **Health monitoring** — RAM/disk/queue alerts to Telegram (`scripts/mail_health_monitor.py`)
 
 ## Architecture
 
 ```
-Browser ──> :8123 FastAPI (uvicorn, 2 workers)
-              ├─ routers/mail.py     — API: login, mails, send, drafts, archive
-              ├─ routers/blossom.py  — NIP-96: attachment upload, chunks
-              ├─ routers/imap.py     — IMAP bridge
-              ├─ mailapp/queue.py    — event queue (SQLite)
-              ├─ mailapp/worker.py   — NIP-59 decryption outside the WS perimeter
-              └─ mailapp/bridge.py   — relay subscriber (separate process)
-Static: static/index.html + app.<hash>.js/css (esbuild, long-cache)
+Browser ──> FastAPI (uvicorn, 2 workers) :8123
+              ├─ mailapp/routers/mail.py     — login, mails, send, drafts, archive
+              ├─ mailapp/routers/blossom.py  — NIP-96 uploads
+              ├─ mailapp/routers/imap.py     — IMAP bridge API
+              ├─ mailapp/queue.py            — event queue (SQLite)
+              ├─ mailapp/worker.py           — NIP-59 decryption outside WS perimeter
+              └─ mailapp/bridge.py           — relay subscriber (no private keys)
+
+mailbridge/                — protocol core: nip44, nip59, mail_message, blossom, imap_bridge
+static/                    — esbuild bundle (long-cache fingerprints)
 ```
 
-Three processes (`start.sh`): **bridge** (subscription, no keys) → **worker**
-(decryption) → **uvicorn** (API). Keys live only in the worker, stored in
-`mail_keys` (encrypted with master.key).
+Three processes (`start.sh`): **bridge** (subscribe, no keys) → **worker**
+(decrypt) → **uvicorn** (API). Private keys live only in the worker, encrypted
+at rest with the master key.
 
-## Dependency: nostr-mail-bridge
+## Repository layout
 
-The client talks to the Nostr network through the `mailbridge` package
-([konantgit-sys/nostr-mail-bridge](https://github.com/konantgit-sys/nostr-mail-bridge)),
-imported at runtime. Add its `src/` to `PYTHONPATH`:
-
-```bash
-git clone https://github.com/konantgit-sys/nostr-mail-bridge.git
-export PYTHONPATH=$PWD/nostr-mail-bridge/src:$PWD/nostr-mail-bridge/deps
 ```
-
-Or set `NOSTR_MAIL_BRIDGE_SRC=/path/to/nostr-mail-bridge/src` — tests pick it up too.
+app.py                    — uvicorn entry point
+build.py                  — esbuild bundle builder
+mailapp/                  — backend: auth, bridge, config, db, queue, worker, imap_store
+mailapp/routers/          — API: mail, blossom (NIP-96), imap
+mailbridge/               — protocol core: nip44, nip59, mail_message, blossom, imap_bridge
+docker/                   — Dockerfile + docker-compose.yml
+docs/                     — SPEC.md, DEPLOY.md, NIP-44/59 specs, GUIDEs, test vectors
+data/agents_registry/     — SNIN agent passports
+scripts/                  — CLI, backups, health monitor, cache cleanup
+static/                   — frontend sources + built bundle
+tests/                    — 157 tests: API, protocol, queue, IMAP, drafts/archive
+```
 
 ## Quick start
 
 ```bash
-# 1. Config (example → real)
-cp config.example.json config.json   # fill nsec/pubkey/relays/db
+# 1. Config (example → production)
+cp config.example.json config.json      # fill nsec/pubkey/relays/db
 
-# 2. Backend
+# 2. Install
+pip3 install -r requirements.txt
+
+# 3. Run
 python3 -m uvicorn app:app --port 8123
 
-# 3. Frontend (rebuild bundle after editing static/js/*)
-python3 build.py                     # needs esbuild (npm install esbuild)
+# 4. Rebuild frontend after static/js/* edits
+python3 build.py
 
-# 4. Tests (self-contained: conftest generates config.json automatically)
-python3 -m pytest tests/ -q          # 115 passed
+# 5. Tests (self-contained: config.json is generated automatically)
+python3 -m pytest tests/ -q             # 157 passed
 ```
 
-**Self-contained tests:** in a fresh clone without `config.json`, conftest.py
-creates a test config itself (random paired nsec/pubkey, local DB, empty
-relays). The production config.json is never overwritten.
+### Docker
+
+```bash
+cd docker
+docker compose up -d
+```
 
 ## CLI
 
 ```bash
-python3 scripts/mail_cli.py health                    # metrics
-python3 scripts/mail_cli.py list                      # inbox
-python3 scripts/mail_cli.py list --folder archive     # archive
-python3 scripts/mail_cli.py list --folder outbox      # sent
-python3 scripts/mail_cli.py read 42                   # detail + body
-python3 scripts/mail_cli.py send --to npub1…@your-domain \
-    --subject "Hello" --body "Text" [--attach file.png]
+python3 scripts/mail_cli.py health | status
+python3 scripts/mail_cli.py list                     # inbox
+python3 scripts/mail_cli.py list --folder archive    # archive
+python3 scripts/mail_cli.py read 42
+python3 scripts/mail_cli.py send --to npub1…@snin-mail.v2.site \
+    --subject "Hi" --body "Text" [--attach file.png]
 python3 scripts/mail_cli.py draft --subject "Draft" --body "…"
-python3 scripts/mail_cli.py archive 42                # to archive
+python3 scripts/mail_cli.py archive 42 [--unarchive]
 ```
 
-Options: `--url http://localhost:8123`, `--password` (or env `MAIL_PASSWORD`),
-`--token` (env `MAIL_TOKEN`; token cached in `~/.cache/mail_cli_token`).
-
-## API
+## API (main)
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -113,23 +114,27 @@ Options: `--url http://localhost:8123`, `--password` (or env `MAIL_PASSWORD`),
 | POST | `/api/blossom/upload` | attachment (NIP-96) |
 | GET | `/api/health` | RAM, DB, queue metrics |
 
-Auth: `Authorization: Bearer <token>` (cookies are ignored — the v2.site
-proxy caches Set-Cookie).
+Auth: `Authorization: Bearer <token>`.
 
-## Repository layout
+## Documentation
 
-```
-app.py                     — uvicorn entry point
-build.py                   — esbuild frontend build (fingerprint bundles)
-mailapp/                   — backend: auth, bridge, config, db, queue, worker, imap_store
-mailapp/routers/           — API: mail, blossom (NIP-96), imap
-static/js/                 — frontend sources: core, api, inbox, detail, composer, main
-static/templates/index.src.html — markup (built → static/index.html)
-tests/                     — 115 tests: API, Blossom, queue, IMAP, drafts/archive
-scripts/                   — CLI, backups, health monitor, cache cleanup
-docs/screenshots/          — screenshots used in this README
-```
+- `docs/SPEC.md` — full project specification
+- `docs/NIP-44.md`, `docs/NIP-59.md` — protocol notes + test vectors
+- `docs/GUIDE-nostrmail.md` — how SNIN Mail addresses work
+- `docs/GUIDE-imap.md` — IMAP bridge setup
+- `docs/GUIDE-friends.md` — friend-to-friend mail guide
+- `docs/DEPLOY.md` — production deploy
+- `docs/REFACTORING_SPEC.md` — phases 0–5 history
 
-## License
+## History
 
-[GNU AGPL-3.0](LICENSE) — server-side software, keep the network free.
+This repo is the successor of **nostr-mail-bridge** (Aug 2026, archived):
+the protocol core (NIP-44/59, mail format, IMAP bridge) was merged into the
+web client and unified here. One project, one codebase, one deploy.
+
+## Development rules
+
+1. Tests are mandatory after every change: `pytest` (157, green)
+2. Bundles are artifacts: after `static/js/*` edits run `build.py`
+3. Secrets (`config.json`, `keys/`, `.sessions.json`) stay in `.gitignore`
+4. Deploy and git mirror stay in sync (diff = 0)

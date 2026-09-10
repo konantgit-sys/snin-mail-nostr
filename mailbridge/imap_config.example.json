@@ -1,0 +1,9 @@
+{
+  "host": "imap.mail.ru",
+  "port": 993,
+  "ssl": true,
+  "user": "ВАШ_ЛОГИН@mail.ru",
+  "app_password": "ПАРОЛЬ_ПРИЛОЖЕНИЯ",
+  "target_owner": "cryter",
+  "poll_seconds": 120
+}

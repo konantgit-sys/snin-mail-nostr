@@ -1,0 +1,1 @@
+"""Nostr Mail Bridge — пакет."""
