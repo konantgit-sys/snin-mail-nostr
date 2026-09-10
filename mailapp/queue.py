@@ -122,6 +122,26 @@ def _owner_of(event: dict) -> str:
     return ""
 
 
+def _is_registered(pubkey: str) -> bool:
+    """Есть ли в accounts ящик с таким ключом.
+
+    Событие на незарегистрированный (или уже удалённый) npub — не письмо для
+    нас: такие прилетают от чужих протоколов на публичные ключи из нашего
+    NIP-05-списка. Если таблицы accounts нет (старая или тестовая БД) —
+    ничего не фильтруем, чтобы не менять поведение вслепую.
+    """
+    conn = _conn()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM accounts WHERE pubkey_hex=? LIMIT 1", (pubkey,)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return True
+    finally:
+        conn.close()
+    return row is not None
+
+
 def enqueue(event: dict) -> int | None:
     """Кладёт сырое событие в очередь (вызывает подписчик). Возвращает id.
 
@@ -132,6 +152,9 @@ def enqueue(event: dict) -> int | None:
     ensure_schema()
     eid = event.get("id", "")
     owner = _owner_of(event)
+    if owner and not _is_registered(owner):
+        # ящик снят или не зарегистрирован — не занимаем очередь мусором
+        return None
     conn = _conn()
     try:
         if eid:
@@ -216,8 +239,14 @@ def claim(groups: set[str] | None = None, worker: str = "") -> dict | None:
         conn.close()
 
 
-def finish(rid: int, ok: bool, error: str = "", lease: str = "") -> bool:
+def finish(rid: int, ok: bool, error: str = "", lease: str = "", permanent: bool = False) -> bool:
     """Завершение обработки: ok → done; иначе attempts+1 → pending|failed.
+
+    permanent=True — отказ, который повтор не исправит: чужой kind внутри
+    gift wrap, неразбираемый контент, дубликат. Такая задача помечается
+    failed сразу, без трёх попыток. Причина правки — живой поток событий
+    kind=25910 (чужой протокол) на наши ключи из NIP-05-списка: воркер
+    тратил три расшифровки на событие, которое письмом не станет.
 
     Fencing: обновление матчит id + status='processing' + lease, поэтому
     завершение владельца, у которого задачу уже отобрал reclaim_stale,
@@ -241,10 +270,12 @@ def finish(rid: int, ok: bool, error: str = "", lease: str = "") -> bool:
                 (int(time.time()), rid, lease),
             )
         else:
+            # permanent — повтор бессмыслен: сразу failed, попытки не жжём
+            fence = "1=1" if permanent else f"attempts + 1 >= {MAX_ATTEMPTS}"
             cur = conn.execute(
                 "UPDATE mail_queue SET status='failed', attempts=attempts+1, processed_at=?, "
                 "error=?, lease='' WHERE id=? AND status='processing' AND lease=? "
-                f"AND attempts + 1 >= {MAX_ATTEMPTS}",
+                f"AND {fence}",
                 (int(time.time()), error[:300], rid, lease),
             )
             if cur.rowcount != 1:

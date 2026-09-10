@@ -103,6 +103,49 @@ def test_success_clears_previous_reason():
         assert br.last_error == ""
 
 
+def test_permanent_flag_marks_foreign_kind():
+    """Чужой kind — отказ постоянный: повтор не превратит его в письмо."""
+    with tempfile.TemporaryDirectory() as td:
+        recipient = nip59.new_private_key()
+        br = _make_bridge(recipient, td)
+        assert br.handle_event(_wrap_foreign(nip44.pubkey_from_privkey(recipient))) is False
+        assert br.last_error_permanent is True
+        assert br.handle_event({"kind": FOREIGN_KIND, "content": "x", "tags": []}) is False
+        assert br.last_error_permanent is True
+
+
+def test_quota_refusal_is_not_permanent():
+    """Полный ящик — временная причина: письмо должно дождаться места."""
+    with tempfile.TemporaryDirectory() as td:
+        recipient = nip59.new_private_key()
+        br = MailBridge(
+            privkey_hex=recipient,
+            relays=["wss://test.local"],
+            db_path=os.path.join(td, "inbox.db"),
+            max_inbox=0,
+        )
+        assert br.handle_event(_wrap_real_mail(recipient)) is False
+        assert "полон" in br.last_error
+        assert br.last_error_permanent is False
+
+
+def test_worker_treats_permanent_flag():
+    from mailapp import worker
+
+    class _Permanent:
+        last_error_permanent = True
+
+    class _Transient:
+        last_error_permanent = False
+
+    class _Legacy:
+        pass  # мост старой версии — считаем транзиентным
+
+    assert worker._is_permanent(_Permanent()) is True
+    assert worker._is_permanent(_Transient()) is False
+    assert worker._is_permanent(_Legacy()) is False
+
+
 def test_worker_takes_reason_from_bridge():
     from mailapp import worker
 

@@ -47,6 +47,15 @@ def _fail_reason(bridge, err: str = "") -> str:
     return getattr(bridge, "last_error", "") or ""
 
 
+def _is_permanent(bridge) -> bool:
+    """Отказ, который повтор не исправит (чужой kind, неразбираемый контент).
+
+    Такие задачи уходят в failed сразу: раньше воркер тратил на них три
+    попытки, то есть три расшифровки на событие, которое письмом не станет.
+    """
+    return bool(getattr(bridge, "last_error_permanent", False))
+
+
 def _setup_logging():
     logger = logging.getLogger("mail.worker")
     if logger.handlers:
@@ -154,23 +163,26 @@ def run_worker(worker_id: int = 0, total: int = 1) -> None:
             owner = row["owner"]
             candidates = [bridges[owner]] if owner in bridges else list(bridges.values())
             ok, err = False, ""
-            reason = ""
+            reason, permanent = "", False
             for br in candidates:
                 try:
                     if br.handle_event(ev):
                         ok = True
                         break
                     reason = _fail_reason(br, err)
+                    permanent = _is_permanent(br)
                 except Exception as e:
                     err = str(e)
                     reason = str(e)
+                    permanent = False  # исключение может быть временным — повторим
             if ok:
                 q.finish(row["id"], True, lease=row.get("lease", ""))
                 log.info("письмо %s → inbox (owner %s…)", ev.get("id", "?")[:12], owner[:8])
             else:
                 reason = reason or "не принято ни одним мостом (причина не сообщена)"
-                q.finish(row["id"], False, reason, lease=row.get("lease", ""))
-                log.info("задача %d не принята: %s", row["id"], reason)
+                q.finish(row["id"], False, reason, lease=row.get("lease", ""), permanent=permanent)
+                log.info("задача %d не принята%s: %s",
+                         row["id"], " окончательно" if permanent else "", reason)
         except Exception as e:
             log.error("воркер: %s", e)
             time.sleep(2)
