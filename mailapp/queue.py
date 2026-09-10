@@ -80,8 +80,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     и завершение её вызовом finish() без lease делало бы контракт «вызов без
     lease отклоняется» ложным на границе миграции. Поэтому бесхозные строки
     (processing + lease='') явно возвращаются в pending: их заново выдаст
-    claim(), который проставит свежий lease. Прежние версии claim всегда
-    писали started_at, так что эти строки не «живые» ни для одного воркера.
+    claim(), который проставит свежий lease.
+
+    Условие безопасности этого сброса: все воркеры прежней версии остановлены
+    до миграции (docs/DEPLOY.md, «Upgrade: stop old workers before migrating»).
+    Lease-предикат защищает только вызывающих текущей версии — finish() прежней
+    версии матчит id + status и такую строку перезапишет.
     """
     cols = {r[1] for r in conn.execute("PRAGMA table_info(mail_queue)").fetchall()}
     if "lease" not in cols:

@@ -124,13 +124,13 @@ Every claimed row carries a lease token, and `finish()` matches
 `id + status='processing' + lease`. That fence protects workers running **this**
 version: a holder whose task was reclaimed completes 0 rows.
 
-It does **not** protect a worker still running the pre-lease code, and no SQL
-change can. The pre-fix statement matches on `id + status` and never reads the
-lease, so a process of the previous version that resumes after the schema
-migration can overwrite the row a new worker holds — marking it done, or pushing
-it back to pending and charging a retry it never earned. The migration also
-returns orphan rows (`status='processing' AND lease=''`) to pending, because a
-pre-fix `claim()` always wrote `started_at`.
+It does **not** protect a worker still running the pre-lease code: that
+statement matches on `id + status` and never reads the lease, so this predicate
+cannot reach it. A process of the previous version that resumes after the schema
+migration can therefore overwrite the row a new worker holds — marking it done,
+or pushing it back to pending and charging a retry it never earned. The
+migration returns orphan rows (`status='processing' AND lease=''`) to pending,
+which is safe only under the stop-first rule below.
 
 Upgrading a live queue therefore requires draining, not overlapping:
 
@@ -139,8 +139,12 @@ Upgrading a live queue therefore requires draining, not overlapping:
 3. start the new workers — pending rows, including the reclaimed orphans, are
    re-issued by `claim()` with a fresh lease.
 
-If you must run both versions at the same time, do not share one queue file: give
-the old processes their own copy and let them finish there.
+Overlap is not offered as a supported mode. Separate queue files do stop row
+clobbering *across* files, but they do not partition the work: if both copies
+carry the same unfinished event, both versions can process it, each completion is
+valid in its own database, and a shared external effect can fire twice. Making
+overlap safe would take a disjoint work assignment plus an idempotent
+effect-level contract; neither is provided here. Drain instead.
 
 The boundary is pinned by
 `tests/test_stale_completion.py::test_legacy_finish_by_id_is_not_fenced`, which

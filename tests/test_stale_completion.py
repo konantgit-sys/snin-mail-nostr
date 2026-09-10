@@ -220,8 +220,8 @@ def test_legacy_finish_by_id_is_not_fenced(queue_db):
 
     The lease fence protects callers that run *this* `finish()`. A pre-fix
     process still completes by `id + status='processing'` and therefore
-    overwrites the row of the current holder, and no SQL-side guard can close
-    that: the old statement never mentions the lease. Migration is therefore
+    overwrites the row of the current holder, and this lease predicate cannot
+    close that: the old statement never mentions the lease. Migration is therefore
     defined to require a drained queue — see docs/DEPLOY.md, "Upgrade: stop old
     workers before migrating". This test keeps the limit visible instead of
     implying the fence covers it.
