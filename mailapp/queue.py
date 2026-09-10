@@ -73,10 +73,23 @@ def _conn() -> sqlite3.Connection:
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    """Догоняет схему для БД, созданных до появления lease (идемпотентно)."""
+    """Догоняет схему для БД, созданных до появления lease (идемпотентно).
+
+    H14 (внешнее ревью, board seq 29590): `ADD COLUMN lease TEXT DEFAULT ''`
+    отдаёт pre-fix строкам lease=''. Такая строка остаётся status='processing',
+    и завершение её вызовом finish() без lease делало бы контракт «вызов без
+    lease отклоняется» ложным на границе миграции. Поэтому бесхозные строки
+    (processing + lease='') явно возвращаются в pending: их заново выдаст
+    claim(), который проставит свежий lease. Прежние версии claim всегда
+    писали started_at, так что эти строки не «живые» ни для одного воркера.
+    """
     cols = {r[1] for r in conn.execute("PRAGMA table_info(mail_queue)").fetchall()}
     if "lease" not in cols:
         conn.execute("ALTER TABLE mail_queue ADD COLUMN lease TEXT DEFAULT ''")
+        conn.execute(
+            "UPDATE mail_queue SET status='pending', started_at=0, worker='', lease='' "
+            "WHERE status='processing' AND lease=''"
+        )
 
 
 def ensure_schema() -> None:
@@ -210,6 +223,11 @@ def finish(rid: int, ok: bool, error: str = "", lease: str = "") -> bool:
 
     Возвращает True, если строка действительно обновлена этим владельцем.
     """
+    if not lease:
+        # H14: пустой lease — не владелец. Раньше дефолт lease='' совпадал с
+        # мигрированной строкой (lease='' из ADD COLUMN DEFAULT) и завершал её,
+        # хотя воркер её не брал. См. _migrate: бесхозные строки возвращаются в pending.
+        return False
     conn = _conn()
     try:
         if ok:

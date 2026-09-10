@@ -149,3 +149,67 @@ def test_migration_adds_lease_to_legacy_db(tmp_path, monkeypatch):
     row = q.claim(groups=None, worker="w1")
     assert row is not None and row["lease"], "legacy row must be claimable with a lease"
     assert row["lease"] != ""
+
+
+def test_migration_does_not_leave_orphan_processing_row(tmp_path, monkeypatch):
+    """H14 (review seq 29590): migrated pre-fix row must not stay claimable by an
+    empty lease.
+
+    A DB created before the fix can hold a row that was already taken into work:
+    status='processing', started_at>0, and (after ADD COLUMN) lease=''. The old
+    migration test started from a *pending* row and called claim() first, so it
+    never exercised this boundary. Here the boundary is reproduced directly: the
+    orphan row must go back to pending, and no empty-lease finish may complete it.
+    """
+    db = str(tmp_path / "legacy_processing.db")
+    monkeypatch.setattr(q, "DB", db)
+    with sqlite3.connect(db) as c:
+        c.execute(
+            "CREATE TABLE mail_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT DEFAULT '',"
+            " payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',"
+            " attempts INTEGER NOT NULL DEFAULT 0, worker TEXT DEFAULT '',"
+            " created_at INTEGER NOT NULL, started_at INTEGER DEFAULT 0,"
+            " processed_at INTEGER DEFAULT 0, error TEXT DEFAULT '')"
+        )
+        # строка, взятая в работу ДО появления lease (как это делал прежний claim)
+        c.execute(
+            "INSERT INTO mail_queue (owner, payload, status, worker, created_at, started_at)"
+            " VALUES (?, '{}', 'processing', 'legacy-worker', ?, ?)",
+            (OWNER, int(time.time()) - 500, int(time.time()) - 500),
+        )
+        c.commit()
+        rid = c.execute("SELECT id FROM mail_queue").fetchone()[0]
+
+    q.ensure_schema()   # миграция: ADD COLUMN lease + сброс бесхозных строк
+
+    row = _row(db, rid)
+    assert row[0] == "pending", "orphan processing row must return to pending"
+    assert row[3] == "", "orphan row must not carry a lease"
+
+    # пустой lease (легаси-вызов finish без токена) не завершает строку
+    assert q.finish(rid, True) is False
+    assert q.finish(rid, False, error="legacy caller") is False
+    assert _row(db, rid)[0] == "pending", "empty-lease finish must change nothing"
+
+    # штатный путь: claim выдаёт свежий lease, владелец завершает
+    claimed = q.claim(groups={OWNER}, worker="new-worker")
+    assert claimed is not None and claimed["id"] == rid and claimed["lease"]
+    assert q.finish(rid, True, lease=claimed["lease"]) is True
+    assert _row(db, rid)[0] == "done"
+
+
+def test_empty_lease_never_matches_a_processing_row(queue_db):
+    """The literal migrated state (processing + lease='') cannot be written by
+    finish(rid, ok) with the default empty lease — the rejection is the guard,
+    not the WHERE clause comparing two equal empty strings."""
+    rid = q.enqueue(_ev())
+    claimed = q.claim(groups={OWNER}, worker="A")
+    assert claimed is not None and claimed["id"] == rid
+    with sqlite3.connect(queue_db) as c:   # эмулируем строку, которую дал ADD COLUMN
+        c.execute("UPDATE mail_queue SET lease='' WHERE id=?", (rid,))
+        c.commit()
+
+    assert q.finish(rid, True) is False, "empty lease must be rejected explicitly"
+    assert _row(queue_db, rid)[0] == "processing"
+    assert q.finish(rid, False, error="empty") is False
+    assert _row(queue_db, rid)[0] == "processing" and _row(queue_db, rid)[2] == 0
