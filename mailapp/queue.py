@@ -11,18 +11,24 @@ WebSocket подписчика, одно тяжёлое письмо блоки�
   возвращает её в pending (таймаут RECLAIM_TIMEOUT).
 - Гонка безопасна: claim использует UPDATE ... WHERE status='pending' —
   задачу забирает ровно один воркер (rowcount=1).
+- Позднее завершение не портит чужую работу: claim выдаёт lease-токен, а
+  finish матчит id + status='processing' + lease. Завершение «протухшего»
+  владельца после reclaim_stale отклоняется (0 строк) и не тратит attempts
+  нового владельца (см. tests/test_stale_completion.py).
 - Воркер обрабатывает только владельцев своей группы (owner IN groups) плюс
   задачи без owner (owner='') — их пробует любой воркер.
 
 Таблицы:
 - mail_queue:  id, owner (pubkey получателя из тега p), payload (сырое событие),
                status (pending|processing|done|failed), attempts, worker,
+               lease (токен владения, выдаётся claim и гасится при завершении),
                created_at, started_at, processed_at, error
 - mail_workers: heartbeat воркеров (id, group_id, last_seen)
 """
 from __future__ import annotations
 
 import json
+import secrets
 import sqlite3
 import time
 
@@ -36,6 +42,7 @@ CREATE TABLE IF NOT EXISTS mail_queue (
     status TEXT NOT NULL DEFAULT 'pending',
     attempts INTEGER NOT NULL DEFAULT 0,
     worker TEXT DEFAULT '',
+    lease TEXT DEFAULT '',
     created_at INTEGER NOT NULL,
     started_at INTEGER DEFAULT 0,
     processed_at INTEGER DEFAULT 0,
@@ -65,11 +72,19 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Догоняет схему для БД, созданных до появления lease (идемпотентно)."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(mail_queue)").fetchall()}
+    if "lease" not in cols:
+        conn.execute("ALTER TABLE mail_queue ADD COLUMN lease TEXT DEFAULT ''")
+
+
 def ensure_schema() -> None:
     """Создаёт таблицы очереди, если их нет (идемпотентно)."""
     conn = _conn()
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         conn.commit()
     finally:
         conn.close()
@@ -170,42 +185,54 @@ def claim(groups: set[str] | None = None, worker: str = "") -> dict | None:
         if not rows:
             return None
         rid, owner, payload = rows[0]
+        lease = secrets.token_hex(16)  # токен владения: гасит завершение старого владельца
         cur = conn.execute(
-            "UPDATE mail_queue SET status='processing', worker=?, started_at=? "
+            "UPDATE mail_queue SET status='processing', worker=?, started_at=?, lease=? "
             "WHERE id=? AND status='pending'",
-            (worker, int(time.time()), rid),
+            (worker, int(time.time()), lease, rid),
         )
         conn.commit()
         if cur.rowcount != 1:
             return None  # кто-то другой успел забрать
-        return {"id": rid, "owner": owner, "payload": payload}
+        return {"id": rid, "owner": owner, "payload": payload, "lease": lease}
     finally:
         conn.close()
 
 
-def finish(rid: int, ok: bool, error: str = "") -> None:
-    """Завершение обработки: ok → done; иначе attempts+1 → pending|failed."""
+def finish(rid: int, ok: bool, error: str = "", lease: str = "") -> bool:
+    """Завершение обработки: ok → done; иначе attempts+1 → pending|failed.
+
+    Fencing: обновление матчит id + status='processing' + lease, поэтому
+    завершение владельца, у которого задачу уже отобрал reclaim_stale,
+    отклоняется (0 строк) — оно не трогает работу нового владельца и не
+    списывает его attempts. attempts инкрементится атомарно внутри UPDATE,
+    без предварительного SELECT.
+
+    Возвращает True, если строка действительно обновлена этим владельцем.
+    """
     conn = _conn()
     try:
         if ok:
-            conn.execute(
-                "UPDATE mail_queue SET status='done', processed_at=?, error='' WHERE id=?",
-                (int(time.time()), rid),
+            cur = conn.execute(
+                "UPDATE mail_queue SET status='done', processed_at=?, error='', lease='' "
+                "WHERE id=? AND status='processing' AND lease=?",
+                (int(time.time()), rid, lease),
             )
         else:
-            row = conn.execute("SELECT attempts FROM mail_queue WHERE id=?", (rid,)).fetchone()
-            attempts = (row[0] if row else 0) + 1
-            if attempts >= MAX_ATTEMPTS:
-                conn.execute(
-                    "UPDATE mail_queue SET status='failed', attempts=?, processed_at=?, error=? WHERE id=?",
-                    (attempts, int(time.time()), error[:300], rid),
-                )
-            else:
-                conn.execute(
-                    "UPDATE mail_queue SET status='pending', attempts=?, started_at=0, error=? WHERE id=?",
-                    (attempts, error[:300], rid),
+            cur = conn.execute(
+                "UPDATE mail_queue SET status='failed', attempts=attempts+1, processed_at=?, "
+                "error=?, lease='' WHERE id=? AND status='processing' AND lease=? "
+                f"AND attempts + 1 >= {MAX_ATTEMPTS}",
+                (int(time.time()), error[:300], rid, lease),
+            )
+            if cur.rowcount != 1:
+                cur = conn.execute(
+                    "UPDATE mail_queue SET status='pending', attempts=attempts+1, started_at=0, "
+                    "lease='', error=? WHERE id=? AND status='processing' AND lease=?",
+                    (error[:300], rid, lease),
                 )
         conn.commit()
+        return cur.rowcount == 1
     finally:
         conn.close()
 
@@ -217,7 +244,7 @@ def reclaim_stale(timeout: int = RECLAIM_TIMEOUT) -> int:
     conn = _conn()
     try:
         cur = conn.execute(
-            "UPDATE mail_queue SET status='pending', started_at=0 "
+            "UPDATE mail_queue SET status='pending', started_at=0, lease='' "
             "WHERE status='processing' AND started_at > 0 AND started_at < ?",
             (cutoff,),
         )

@@ -149,10 +149,11 @@ def run_worker(worker_id: int = 0, total: int = 1) -> None:
                 except Exception as e:
                     err = str(e)
             if ok:
-                q.finish(row["id"], True)
+                q.finish(row["id"], True, lease=row.get("lease", ""))
                 log.info("письмо %s → inbox (owner %s…)", ev.get("id", "?")[:12], owner[:8])
             else:
-                q.finish(row["id"], False, err or "не расшифровано ни одним ключом группы")
+                q.finish(row["id"], False, err or "не расшифровано ни одним ключом группы",
+                         lease=row.get("lease", ""))
                 log.debug("задача %d не обработана: %s", row["id"], err or "нет ключа")
         except Exception as e:
             log.error("воркер: %s", e)

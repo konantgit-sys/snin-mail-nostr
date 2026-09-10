@@ -70,7 +70,7 @@ def test_claim_any_owner_when_empty(queue_db):
 def test_finish_ok_marks_done(queue_db):
     qid = q.enqueue(_ev("A" * 64))
     row = q.claim(groups={"A" * 64}, worker="w1")
-    q.finish(row["id"], True)
+    q.finish(row["id"], True, lease=row["lease"])
     with sqlite3.connect(queue_db) as c:
         status = c.execute("SELECT status FROM mail_queue WHERE id=?", (qid,)).fetchone()[0]
     assert status == "done"
@@ -80,7 +80,7 @@ def test_finish_fail_counts_attempts_then_failed(queue_db):
     qid = q.enqueue(_ev("A" * 64))
     for i in range(q.MAX_ATTEMPTS):
         row = q.claim(groups={"A" * 64}, worker="w1")
-        q.finish(row["id"], False, "не расшифровано")
+        q.finish(row["id"], False, "не расшифровано", lease=row["lease"])
     with sqlite3.connect(queue_db) as c:
         status, attempts = c.execute("SELECT status, attempts FROM mail_queue WHERE id=?", (qid,)).fetchone()
     assert status == "failed"
@@ -90,7 +90,7 @@ def test_finish_fail_counts_attempts_then_failed(queue_db):
 def test_finish_fail_returns_to_pending_before_max(queue_db):
     qid = q.enqueue(_ev("A" * 64))
     row = q.claim(groups={"A" * 64}, worker="w1")
-    q.finish(row["id"], False, "попробуй ещё")
+    q.finish(row["id"], False, "попробуй ещё", lease=row["lease"])
     with sqlite3.connect(queue_db) as c:
         status, attempts = c.execute("SELECT status, attempts FROM mail_queue WHERE id=?", (qid,)).fetchone()
     assert status == "pending"  # вернулась в очередь
@@ -127,7 +127,7 @@ def test_queue_survives_restart(queue_db):
     again = q.claim(groups={"A" * 64}, worker="new")
     assert again is not None
     assert again["id"] == row["id"]
-    q.finish(again["id"], True)
+    q.finish(again["id"], True, lease=again["lease"])
     with sqlite3.connect(queue_db) as c:
         status = c.execute("SELECT status FROM mail_queue WHERE id=?", (qid,)).fetchone()[0]
     assert status == "done"
@@ -136,7 +136,7 @@ def test_queue_survives_restart(queue_db):
 def test_metrics_counts(queue_db):
     q.enqueue(_ev("A" * 64))
     row = q.claim(groups={"A" * 64}, worker="w1")
-    q.finish(row["id"], True)
+    q.finish(row["id"], True, lease=row["lease"])
     q.heartbeat("w1", 0)
     m = q.metrics()
     assert m["pending"] == 0
