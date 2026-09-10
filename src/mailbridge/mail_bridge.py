@@ -104,6 +104,9 @@ class MailBridge:
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
         self._log = logger or log
+        # Причина последнего отказа handle_event(): воркер обязан класть в БД
+        # именно её, а не общую фразу-заглушку (см. mailapp/worker.py).
+        self.last_error: str = ""
         self._threads: list[threading.Thread] = []
         self._stop = threading.Event()
         self._init_db()
@@ -128,8 +131,14 @@ class MailBridge:
     # ── входящие ──────────────────────────────────────────
 
     def handle_event(self, event: dict) -> bool:
-        """Обрабатывает одно nostr-событие. True — письмо принято."""
+        """Обрабатывает одно nostr-событие. True — письмо принято.
+
+        При отказе заполняет self.last_error, чтобы вызывающий (воркер очереди)
+        записал в БД настоящую причину, а не общую фразу.
+        """
+        self.last_error = ""
         if not isinstance(event, dict) or "kind" not in event:
+            self.last_error = "не nostr-событие: нет поля kind"
             return False
         kind = event.get("kind")
 
@@ -137,6 +146,7 @@ class MailBridge:
             return self._handle_gift_wrap(event)
         if kind == 1301:
             return self._handle_plain_1301(event)
+        self.last_error = f"kind={kind}: не письмо, поддерживаем 1059 (gift wrap) и 1301"
         return False
 
     def _handle_gift_wrap(self, event: dict) -> bool:
@@ -144,9 +154,14 @@ class MailBridge:
             rumor, sender = unwrap(event, self.privkey)
         except Exception as e:
             self._log.debug("gift wrap не наш/битый: %s", e)
+            self.last_error = f"gift wrap не распакован: {type(e).__name__}: {e}"
             return False
         if rumor.get("kind") != MAIL_KIND:
             self._log.debug("внутри gift wrap kind=%s, не письмо", rumor.get("kind"))
+            self.last_error = (
+                f"внутри gift wrap kind={rumor.get('kind')}, "
+                f"а письмом считаем kind={MAIL_KIND}"
+            )
             return False
         return self._ingest_mail(rumor.get("content", ""), sender, event)
 
@@ -154,9 +169,11 @@ class MailBridge:
         """Открытый kind:1301 (без gift wrap). Проверяем подпись, парсим."""
         if not verify_signature(event.get("pubkey", ""), event.get("id", ""), event.get("sig", "")):
             self._log.debug("kind:1301 с невалидной подписью — игнор")
+            self.last_error = "kind:1301 с невалидной подписью"
             return False
         p_tags = [t[1] for t in event.get("tags", []) if isinstance(t, list) and t and t[0] == "p"]
         if self.pubkey not in p_tags:
+            self.last_error = "kind:1301 без нашего p-тега"
             return False
         return self._ingest_mail(event.get("content", ""), event.get("pubkey", ""), event)
 
@@ -169,12 +186,14 @@ class MailBridge:
                 ck = get_conversation_key(self.privkey, sender_pubkey)
                 content = decrypt(content, ck)
                 parsed = parse_mail(content)
-            except Exception:
+            except Exception as e:
                 self._log.debug("контент kind:1301 не распознан как письмо")
+                self.last_error = f"контент не расшифрован: {type(e).__name__}"
                 return False
 
         if not parsed["from"] or not parsed["subject"]:
             self._log.debug("письмо без From/Subject — игнор")
+            self.last_error = "после разбора нет From или Subject"
             return False
 
         message_id = parsed["message_id"] or f"<{uuid.uuid4().hex}@snin-mail.v2.site>"
@@ -197,6 +216,7 @@ class MailBridge:
             ).fetchone()[0]
         if cnt >= self.max_inbox:
             self._log.warning("⚠️ ящик %s полон (%s/%s) — письмо отклонено", self.label, cnt, self.max_inbox)
+            self.last_error = f"ящик полон ({cnt}/{self.max_inbox})"
             self.notify_telegram(f"⚠️ Ящик [{self.label}] полон ({cnt}/{self.max_inbox}) — письмо «{parsed['subject'][:60]}» не сохранено")
             return False
 
@@ -228,6 +248,7 @@ class MailBridge:
                 f"Тема: {parsed['subject']}\n\n{parsed['body'][:300]}"
             )
             return True
+        self.last_error = "дубликат message_id — письмо уже лежит в ящике"
         return False
 
     # ── маршрутизация по To: ────────────────────────────────
