@@ -34,6 +34,19 @@ def _group_of(pubkey_hex: str, n: int) -> int:
     return hashlib.sha256(pubkey_hex.encode()).digest()[0] % max(1, n)
 
 
+def _fail_reason(bridge, err: str = "") -> str:
+    """Настоящая причина отказа задачи.
+
+    Раньше в БД уходила общая формулировка про «ключи группы» — она
+    подставлялась при любом отказе без исключения и скрывала реальную причину
+    (чужой kind внутри gift wrap, пустой From и т.п.). Порядок выбора:
+    исключение → причина от моста → честная общая формулировка.
+    """
+    if err:
+        return err
+    return getattr(bridge, "last_error", "") or ""
+
+
 def _setup_logging():
     logger = logging.getLogger("mail.worker")
     if logger.handlers:
@@ -141,20 +154,23 @@ def run_worker(worker_id: int = 0, total: int = 1) -> None:
             owner = row["owner"]
             candidates = [bridges[owner]] if owner in bridges else list(bridges.values())
             ok, err = False, ""
+            reason = ""
             for br in candidates:
                 try:
                     if br.handle_event(ev):
                         ok = True
                         break
+                    reason = _fail_reason(br, err)
                 except Exception as e:
                     err = str(e)
+                    reason = str(e)
             if ok:
                 q.finish(row["id"], True, lease=row.get("lease", ""))
                 log.info("письмо %s → inbox (owner %s…)", ev.get("id", "?")[:12], owner[:8])
             else:
-                q.finish(row["id"], False, err or "не расшифровано ни одним ключом группы",
-                         lease=row.get("lease", ""))
-                log.debug("задача %d не обработана: %s", row["id"], err or "нет ключа")
+                reason = reason or "не принято ни одним мостом (причина не сообщена)"
+                q.finish(row["id"], False, reason, lease=row.get("lease", ""))
+                log.info("задача %d не принята: %s", row["id"], reason)
         except Exception as e:
             log.error("воркер: %s", e)
             time.sleep(2)
