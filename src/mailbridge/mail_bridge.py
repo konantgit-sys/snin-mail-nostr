@@ -107,6 +107,9 @@ class MailBridge:
         # Причина последнего отказа handle_event(): воркер обязан класть в БД
         # именно её, а не общую фразу-заглушку (см. mailapp/worker.py).
         self.last_error: str = ""
+        # Постоянный ли отказ: повтор не исправит (чужой kind, неразбираемый
+        # контент). Воркер по этому флагу не тратит три попытки (см. #2).
+        self.last_error_permanent: bool = False
         self._threads: list[threading.Thread] = []
         self._stop = threading.Event()
         self._init_db()
@@ -137,8 +140,10 @@ class MailBridge:
         записал в БД настоящую причину, а не общую фразу.
         """
         self.last_error = ""
+        self.last_error_permanent = False
         if not isinstance(event, dict) or "kind" not in event:
             self.last_error = "не nostr-событие: нет поля kind"
+            self.last_error_permanent = True
             return False
         kind = event.get("kind")
 
@@ -147,6 +152,7 @@ class MailBridge:
         if kind == 1301:
             return self._handle_plain_1301(event)
         self.last_error = f"kind={kind}: не письмо, поддерживаем 1059 (gift wrap) и 1301"
+        self.last_error_permanent = True
         return False
 
     def _handle_gift_wrap(self, event: dict) -> bool:
@@ -155,6 +161,7 @@ class MailBridge:
         except Exception as e:
             self._log.debug("gift wrap не наш/битый: %s", e)
             self.last_error = f"gift wrap не распакован: {type(e).__name__}: {e}"
+            self.last_error_permanent = True
             return False
         if rumor.get("kind") != MAIL_KIND:
             self._log.debug("внутри gift wrap kind=%s, не письмо", rumor.get("kind"))
@@ -162,6 +169,7 @@ class MailBridge:
                 f"внутри gift wrap kind={rumor.get('kind')}, "
                 f"а письмом считаем kind={MAIL_KIND}"
             )
+            self.last_error_permanent = True
             return False
         return self._ingest_mail(rumor.get("content", ""), sender, event)
 
@@ -170,10 +178,12 @@ class MailBridge:
         if not verify_signature(event.get("pubkey", ""), event.get("id", ""), event.get("sig", "")):
             self._log.debug("kind:1301 с невалидной подписью — игнор")
             self.last_error = "kind:1301 с невалидной подписью"
+            self.last_error_permanent = True
             return False
         p_tags = [t[1] for t in event.get("tags", []) if isinstance(t, list) and t and t[0] == "p"]
         if self.pubkey not in p_tags:
             self.last_error = "kind:1301 без нашего p-тега"
+            self.last_error_permanent = True
             return False
         return self._ingest_mail(event.get("content", ""), event.get("pubkey", ""), event)
 
@@ -189,11 +199,13 @@ class MailBridge:
             except Exception as e:
                 self._log.debug("контент kind:1301 не распознан как письмо")
                 self.last_error = f"контент не расшифрован: {type(e).__name__}"
+                self.last_error_permanent = True
                 return False
 
         if not parsed["from"] or not parsed["subject"]:
             self._log.debug("письмо без From/Subject — игнор")
             self.last_error = "после разбора нет From или Subject"
+            self.last_error_permanent = True
             return False
 
         message_id = parsed["message_id"] or f"<{uuid.uuid4().hex}@snin-mail.v2.site>"
@@ -249,6 +261,7 @@ class MailBridge:
             )
             return True
         self.last_error = "дубликат message_id — письмо уже лежит в ящике"
+        self.last_error_permanent = True
         return False
 
     # ── маршрутизация по To: ────────────────────────────────
