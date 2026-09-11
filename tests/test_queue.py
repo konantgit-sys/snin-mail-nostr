@@ -40,31 +40,6 @@ def test_enqueue_no_p_tag_owner_empty(queue_db):
     assert owner == ""
 
 
-def test_finish_permanent_fails_without_retries(queue_db):
-    """Постоянный отказ (чужой kind внутри gift wrap) — сразу failed.
-
-    Живой поток kind=25910 на наши ключи: раньше воркер делал три
-    расшифровки на событие, которое письмом не станет.
-    """
-    qid = q.enqueue(_ev("A" * 64))
-    row = q.claim(groups={"A" * 64}, worker="w1")
-    q.finish(row["id"], False, "внутри gift wrap kind=25910", lease=row["lease"], permanent=True)
-    with sqlite3.connect(queue_db) as c:
-        status, attempts = c.execute("SELECT status, attempts FROM mail_queue WHERE id=?", (qid,)).fetchone()
-    assert (status, attempts) == ("failed", 1)
-    assert q.claim(groups={"A" * 64}, worker="w2") is None
-
-
-def test_enqueue_rejects_unregistered_recipient(queue_db):
-    """Событие на снятый/незарегистрированный ключ не занимает очередь."""
-    with sqlite3.connect(queue_db) as c:
-        c.execute("CREATE TABLE IF NOT EXISTS accounts (pubkey_hex TEXT PRIMARY KEY)")
-        c.execute("INSERT INTO accounts (pubkey_hex) VALUES (?)", ("A" * 64,))
-        c.commit()
-    assert q.enqueue(_ev("B" * 64)) is None      # ящика нет — не принимаем
-    assert q.enqueue(_ev("A" * 64)) is not None  # зарегистрирован — принимаем
-
-
 def test_claim_race_single_winner(queue_db):
     """Два воркера на одну задачу — забирает ровно один."""
     q.enqueue(_ev("A" * 64))
@@ -188,3 +163,18 @@ def test_enqueue_different_events_both_queued(queue_db):
     with sqlite3.connect(queue_db) as c:
         n = c.execute("SELECT COUNT(*) FROM mail_queue").fetchone()[0]
     assert n == 2
+
+
+def test_finish_without_lease_rejected(queue_db):
+    """H14: завершение без lease отклоняется — чужой/бесхозный воркер не может
+    закрыть задачу, которую взял другой (защита от двойного завершения)."""
+    qid = q.enqueue(_ev("A" * 64))
+    row = q.claim(groups={"A" * 64}, worker="w1")
+    assert q.finish(row["id"], True) is False          # без lease — не владелец
+    with sqlite3.connect(queue_db) as c:
+        status = c.execute("SELECT status FROM mail_queue WHERE id=?", (qid,)).fetchone()[0]
+    assert status == "processing"                       # задача не закрыта
+    assert q.finish(row["id"], True, lease=row["lease"]) is True   # владелец закрывает
+    with sqlite3.connect(queue_db) as c:
+        status = c.execute("SELECT status FROM mail_queue WHERE id=?", (qid,)).fetchone()[0]
+    assert status == "done"

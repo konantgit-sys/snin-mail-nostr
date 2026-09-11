@@ -8,7 +8,7 @@ Nostr Mail — Blossom (NIP-96) тесты.
 - Лимит размера → 413.
 - DELETE /media/<sha> без владельца → 403.
 
-Запуск: cd sites/cryter-mail && NO_BRIDGE=1 python3 -m pytest tests/test_blossom.py -v
+Запуск: cd sites/snin-mail && NO_BRIDGE=1 python3 -m pytest tests/test_blossom.py -v
 """
 
 import os

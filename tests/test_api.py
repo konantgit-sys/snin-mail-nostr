@@ -8,7 +8,7 @@ Nostr Mail — API тесты (pytest).
 - Отправка: валидация (тема/тело/адресат), успех.
 - Outbox, NIP-05 discovery.
 
-Запуск:  cd sites/cryter-mail && NO_BRIDGE=1 python3 -m pytest tests/test_api.py -v
+Запуск:  cd sites/snin-mail && NO_BRIDGE=1 python3 -m pytest tests/test_api.py -v
 """
 
 import os

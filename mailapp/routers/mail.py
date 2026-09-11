@@ -353,6 +353,13 @@ def mails_clean(req: Request, filter: str = ""):
     if not me:
         return auth_error()
     if filter == "read":
+        # инициатор фиксируется ДО удаления — триггер потом допишет сами письма
+        execute(
+            cfg.DB,
+            "INSERT INTO audit_log (ts, action, table_name, actor, detail) "
+            "VALUES (strftime('%s','now'), 'delete_request', 'inbox', ?, ?)",
+            (me[:16], "массовое удаление прочитанных (filter=read)"),
+        )
         n = execute(cfg.DB, "DELETE FROM inbox WHERE owner=? AND is_read=1", (me,))
         _cache_invalidate(me)
         return {"ok": True, "deleted": n, "filter": "read"}
@@ -366,6 +373,12 @@ def mail_delete(mid: int, req: Request):
     owner_row = query_one(cfg.DB, "SELECT owner FROM inbox WHERE id=?", (mid,))
     if not owner_row:
         return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+    execute(
+        cfg.DB,
+        "INSERT INTO audit_log (ts, action, table_name, actor, detail) "
+        "VALUES (strftime('%s','now'), 'delete_request', 'inbox', ?, ?)",
+        (owner_row["owner"][:16], f"удаление письма id={mid} из веб-клиента"),
+    )
     n = execute(cfg.DB, "DELETE FROM inbox WHERE id=?", (mid,))
     if n == 0:
         return JSONResponse({"ok": False, "error": "not found"}, status_code=404)

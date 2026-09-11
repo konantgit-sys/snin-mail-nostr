@@ -41,6 +41,35 @@ def _ensure_indexes(conn: sqlite3.Connection):
             ")"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_drafts_owner_updated ON drafts(owner, updated_at DESC)")
+        # ── аудит удалений (08.09 письма были стёрты прямой SQL-операцией —
+        #    следа не осталось; триггер фиксирует ЛЮБОЕ удаление в inbox,
+        #    независимо от способа: веб-клиент, скрипт, ручной SQL) ──
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS audit_log ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " ts INTEGER NOT NULL,"
+            " action TEXT NOT NULL,"       # delete | delete_request
+            " table_name TEXT NOT NULL,"
+            " row_id INTEGER,"
+            " owner TEXT DEFAULT '',"
+            " subject TEXT DEFAULT '',"
+            " message_id TEXT DEFAULT '',"
+            " received_at INTEGER,"
+            " actor TEXT DEFAULT '',"      # кто инициировал (для API) или 'sql/trigger'
+            " detail TEXT DEFAULT ''"      # доп. контекст (напр. сколько удалено)
+            ")"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_owner ON audit_log(owner, ts DESC)")
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS trg_inbox_audit_del "
+            "AFTER DELETE ON inbox BEGIN "
+            "  INSERT INTO audit_log (ts, action, table_name, row_id, owner, subject,"
+            "    message_id, received_at, actor) "
+            "  VALUES (strftime('%s','now'), 'delete', 'inbox', OLD.id, OLD.owner,"
+            "    OLD.subject, OLD.message_id, OLD.received_at, 'trigger'); "
+            "END"
+        )
         # архив (фича: папки) — колонка добавляется идемпотентно
         cols = {r[1] for r in conn.execute("PRAGMA table_info(inbox)").fetchall()}
         if "archived" not in cols:

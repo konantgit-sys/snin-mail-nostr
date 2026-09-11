@@ -1,0 +1,95 @@
+# SNIN Mail — карта проекта и правила работы
+
+Обновлено 2026-09-11 после стандартизации (было три ствола кода и две путаницы:
+имя каталога и двойной git-канал).
+
+## 1. Сущности: что есть что
+
+| Что | Где живёт | URL / порт | Git |
+|---|---|---|---|
+| **ПРОД: SNIN Mail** (сервер + клиент) | `/home/agent/data/sites/snin-mail` | https://snin-mail.v2.site, `full:8123` | нет своего репо — **правим здесь** |
+| **Веб-клиент почты** (SPA) | внутри прода: `static/` | тот же snin-mail.v2.site | собирается `build.py` (esbuild) |
+| **Библиотека `mailbridge`** (NIP-44/59, IMAP) | `/home/agent/data/projects/nostr-mail-bridge` | — | GitHub `konantgit-sys/nostr-mail-bridge` |
+| **ЕДИНЫЙ git-канал** | `/home/agent/data/projects/cryter-mail-release` | — | GitHub `konantgit-sys/snin-mail-nostr` |
+
+Историческое имя каталога прода было `cryter-mail` — **к проекту Cryter почта
+отношения не имеет**. 11.09 каталог переименован в `sites/snin-mail`,
+поддомен перерегистрирован на новый `site_path`.
+
+**Выведено из работы:** `projects/cryter-mail-web` — бывший локальный канал
+хронологии (внутри монорепо `/home/agent/data`). Оставлен архивом, коммиты туда
+больше не идут: единый канал — релиз.
+
+## 2. Состав прода
+
+`sites/snin-mail/`
+
+- `mailapp/` — backend: `bridge.py` (мост-подписчик → очередь), `worker.py`
+  (расшифровка + reclaim), `queue.py`, `db.py`, `auth.py`, `routers/`, `imap_store.py`
+- `static/` — веб-клиент: `js/` (api, composer, core, detail, entry, inbox) +
+  бандл `app.<hash>.js` / `app.<hash>.css` через `build.py`
+- `keys/`, `config.json` — ключи и конфиг (`config.json` хранит абсолютный путь к БД)
+- `tests/` — 116 тестов
+- `scripts/` — `mail_cli.py`, `backup_mail.sh`, health-monitor
+- `docs/` — спецификации, стратегия
+
+Запуск (`start.sh`, поднимается автоматически и перезапускается system-healthcheck):
+`mailapp.bridge` + `uvicorn app:app --port 8123 --workers 2` + `mailapp.worker`.
+Отдельно работает `mailbridge.imap_bridge` (IMAP отложен на другой сервер).
+
+Внешние зависимые точки пути (проверять при любом переезде):
+`start.sh`, `config.json` (`db`), `scripts/backup_mail.sh` (крон каждые 6 ч),
+`init.sh` (блок imap_bridge), `logrotate.conf`.
+
+## 3. Клиент — не отдельный сайт
+
+Веб-клиент лежит в `static/` и раздаётся тем же `https://snin-mail.v2.site`.
+После правок `static/js/*` — обязательная пересборка: `python3 build.py`.
+
+Не путать с `snin-client.v2.site` (`sites/snin-client`, порт 8095) — это другой
+проект «Nostr Web Client + Relay» V27, к почте не относится.
+
+## 4. Статус выравнивания (11.09, проверено живьём)
+
+Архитектура прода приведена к релизной:
+
+- `mailapp/bridge.py` — `_dispatch` кладёт событие в **очередь** (`queue_mod.enqueue`).
+- `mailapp/worker.py` — `reclaim_due`: возврат зависших задач по monotonic-таймеру.
+- `mailapp/queue.py` — дедуп по event id внутри `enqueue`, fencing по `lease`.
+- `bridge.py`, `worker.py`, `queue.py` теперь **идентичны релизу**.
+
+Живые проверки после выравнивания: письмо прошло по маршруту
+«публикация → мост → очередь (задача `done`) → воркер → ящик» за 3 секунды;
+дедуп — перезапуск моста не сдвинул `seq` (30852 → 30852); reclaim — искусственно
+зависшая задача возвращена в `pending` за 5 секунд; тесты 116/116.
+
+Собственные наработки, которых нет у других версий (сохранены в проде и в релизе):
+
+- **аудит удалений** — `audit_log` + триггер `trg_inbox_audit_del` на `DELETE FROM inbox`
+  (ловит любое удаление, включая прямой SQL; именно так 08.09 исчезли 52 письма);
+- **инициатор удаления** в API-обработчиках (`delete_request` с actor).
+
+## 5. Правила работы
+
+1. **Правки — только в проде:** `sites/snin-mail`.
+2. **После завершённого блока** — синхронизация `sites/snin-mail` →
+   `projects/cryter-mail-release`, осмысленный коммит, `git push` в
+   `konantgit-sys/snin-mail-nostr`. Это **единственный** канал в GitHub.
+3. **Никогда не коммитить:** `keys/`, `config.json`, `*.db*`, `*.log*`,
+   `__pycache__`, `tmp/`, `uploads/`, `.sessions.json`, `port.txt`.
+4. **Клиент:** после правок `static/js/*` — `python3 build.py`, иначе прод отдаёт старый бандл.
+5. **Перед «готово»:** полный контур (отправка → релеи → приём → ящик),
+   `pytest tests/` (эталон 116 passed) и
+   `python3 /home/agent/data/scripts/test_architecture.py`.
+6. **Терминология:** «SNIN Mail» — продукт, «мост» — `mailapp/bridge.py`,
+   «воркер» — `mailapp/worker.py`, «клиент» — `static/`, «релиз» —
+   `projects/cryter-mail-release`, «библиотека» — `projects/nostr-mail-bridge`.
+
+## 6. Открытые вопросы
+
+1. Ветка `origin/fix/mail-bridge-20260911` (структура `web/`) в репозитории
+   `snin-mail-nostr`: вливать, закрывать или удалять?
+2. `mobile_check.py` и `start.sh` есть в проде, но не в релизе — стоит ли
+   вынести их в релиз (деплой-артефакты) или держать только на сервере?
+3. Пересборка клиента после последних правок `static/js/*` — проверено, что
+   прод отдаёт актуальный бандл?
