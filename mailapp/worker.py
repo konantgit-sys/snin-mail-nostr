@@ -27,6 +27,17 @@ from .config import BASE, CFG, DB, OWNERS, RELAYS
 from . import queue as q
 
 SYNC_INTERVAL = 60  # сек: синхронизация владельцев из БД
+RECLAIM_INTERVAL = 30  # сек: периодический возврат зависших задач (независимо от простоя очереди)
+
+
+def reclaim_due(last_reclaim: float, now_mono: float, interval: int = RECLAIM_INTERVAL) -> bool:
+    """Пора ли снова вернуть зависшие задачи в очередь.
+
+    Решение привязано к monotonic-времени, а не к числу пустых итераций:
+    при непрерывной нагрузке очередь никогда не пуста, empty_loops остаётся 0,
+    и триггер по пустой очереди не срабатывает вообще.
+    """
+    return now_mono - last_reclaim >= interval
 
 
 def _group_of(pubkey_hex: str, n: int) -> int:
@@ -140,6 +151,7 @@ def run_worker(worker_id: int = 0, total: int = 1) -> None:
     empty_loops = 0
     last_sync = time.time()
     last_sync_state = None  # (владельцы, ключи) — логировать только при изменении
+    last_reclaim = time.monotonic()  # таймер возврата зависших задач, не зависит от empty_loops
     while True:
         try:
             if time.time() - last_sync > SYNC_INTERVAL:
@@ -150,13 +162,20 @@ def run_worker(worker_id: int = 0, total: int = 1) -> None:
                     last_sync_state = state
                 last_sync = time.time()
 
+            # Возврат зависших задач по таймеру, а не по пустой очереди.
+            # Между заданиями: обработчик, который никогда не возвращается, не прерывается.
+            now_mono = time.monotonic()
+            if reclaim_due(last_reclaim, now_mono):
+                n_reclaimed = q.reclaim_stale()
+                last_reclaim = now_mono
+                if n_reclaimed:
+                    log.info("reclaim (таймер): %d зависших задач возвращены в очередь", n_reclaimed)
+
             q.heartbeat(wid, i)
             row = q.claim(my_pubkeys, wid)
             if row is None:
                 empty_loops += 1
                 time.sleep(0.2 if empty_loops % 5 == 0 else 0.8)
-                if empty_loops % 30 == 0:
-                    q.reclaim_stale()
                 continue
             empty_loops = 0
             ev = json.loads(row["payload"])
