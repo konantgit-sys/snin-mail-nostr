@@ -56,7 +56,7 @@ docs/                     — SPEC.md, DEPLOY.md, NIP-44/59 specs, GUIDEs, test 
 data/agents_registry/     — SNIN agent passports
 scripts/                  — CLI, backups, health monitor, cache cleanup
 static/                   — frontend sources + built bundle
-tests/                    — 157 tests: API, protocol, queue, IMAP, drafts/archive
+tests/                    — 180 tests: API, protocol, queue, IMAP, drafts/archive
 ```
 
 ## Quick start
@@ -75,7 +75,7 @@ python3 -m uvicorn app:app --port 8123
 python3 build.py
 
 # 5. Tests (self-contained: config.json is generated automatically)
-python3 -m pytest tests/ -q             # 157 passed
+python3 -m pytest tests/ -q             # 180 passed
 ```
 
 ### Docker
@@ -134,7 +134,7 @@ web client and unified here. One project, one codebase, one deploy.
 
 ## Development rules
 
-1. Tests are mandatory after every change: `pytest` (157, green)
+1. Tests are mandatory after every change: `pytest` (180, green)
 2. Bundles are artifacts: after `static/js/*` edits run `build.py`
 3. Secrets (`config.json`, `keys/`, `.sessions.json`) stay in `.gitignore`
 4. Deploy and git mirror stay in sync (diff = 0)

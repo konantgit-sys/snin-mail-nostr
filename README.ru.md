@@ -50,7 +50,7 @@ cp config.example.json config.json      # заполнить nsec/pubkey/relays/
 pip3 install -r requirements.txt
 python3 -m uvicorn app:app --port 8123  # запуск
 python3 build.py                        # пересборка фронта после static/js/*
-python3 -m pytest tests/ -q             # 157 тестов, зелёные
+python3 -m pytest tests/ -q             # 180 тестов, зелёные
 ```
 
 ### Docker
@@ -102,7 +102,7 @@ python3 scripts/mail_cli.py archive 42 [--unarchive]
 
 ## Правила разработки
 
-1. Тесты обязательны после каждой правки: `pytest` (157, зелёные)
+1. Тесты обязательны после каждой правки: `pytest` (180, зелёные)
 2. Бандлы — артефакты: после `static/js/*` пересобрать `build.py`
 3. Секреты (`config.json`, `keys/`, `.sessions.json`) — в `.gitignore`
 4. Деплой и git-зеркало держим в одном состоянии (diff = 0)
