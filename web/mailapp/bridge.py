@@ -18,6 +18,7 @@ import logging
 import os
 import sys
 import threading
+import time
 
 from .config import BASE, CFG, DB, OWNERS, RELAYS, LIMITS
 
@@ -89,13 +90,32 @@ class SharedSubscriber:
                     pass
 
     def _run_relay(self, url: str):
+        """Подписка на релей с экспоненциальным бэкоффом и алертом.
+
+        2026-09-11: раньше при обрыве шёл фиксированный реконнект каждые 5с
+        без единого уведомления — почта молча простояла 16 часов, потому что
+        релей отдавал 1013 (слоты занимала утечка в relay_gateway).
+        Теперь: задержка растёт 5→10→20→40→60с, при удержании соединения
+        ≥30с она сбрасывается, а на 6-й неудаче подряд уходит один алерт в
+        группу (не чаще раза в 30 минут).
+        """
         import websocket
+        log = logging.getLogger("mailbridge")
+        delay, fails = 5, 0
         while not self._stop.is_set():
+            connected_at = None
+
             try:
                 def on_open(ws):
+                    nonlocal connected_at
                     with self._ws_lock:
                         if ws not in self._ws_list:
                             self._ws_list.append(ws)
+                    connected_at = time.time()
+                    # история релея читается при каждом подключении: сохраняем письма,
+                    # но НЕ шлём их в Telegram (иначе рестарт моста = залп повторов)
+                    for b in self.bridges:
+                        b.suppress_notify = True
                     filter_ = {"kinds": [1059, 1301], "#p": self._pubkeys(), "limit": 100}
                     ws.send(json.dumps(["REQ", self._subid, filter_]))
 
@@ -116,7 +136,9 @@ class SharedSubscriber:
                         if isinstance(ev, dict):
                             self._dispatch(ev)
                     elif arr[0] == "EOSE":
-                        pass  # история загружена, дальше — стрим
+                        # история отдана — дальше живой поток, уведомления включаем
+                        for b in self.bridges:
+                            b.suppress_notify = False
 
                 ws = websocket.WebSocketApp(
                     url,
@@ -130,9 +152,36 @@ class SharedSubscriber:
                 logging.getLogger("mailbridge").debug("%s crashed: %s", url, e)
             finally:
                 self._forget(ws)
-            if not self._stop.is_set():
-                logging.getLogger("mailbridge").info("реконнект %s через 5с", url)
-                self._stop.wait(5)
+
+            if self._stop.is_set():
+                break
+
+            # соединение жило долго → это не «релей лежит», сбрасываем бэкофф
+            if connected_at and (time.time() - connected_at) >= 30:
+                delay, fails = 5, 0
+            else:
+                fails += 1
+                delay = min(delay * 2, 60)
+                log.warning("релей %s недоступен (%d подряд), повтор через %dс", url, fails, delay)
+                if fails == 6:
+                    self._alert(url, fails)
+            self._stop.wait(delay)
+
+    def _alert(self, url: str, fails: int) -> None:
+        """Один алерт в группу при длительной недоступности релея (не чаще 1/30 мин)."""
+        now = time.time()
+        if now - getattr(self, "_last_alert", 0.0) < 1800:
+            return
+        self._last_alert = now
+        text = (f"⚠️ SNIN Mail: релей {url} недоступен, {fails} неудачных попыток подряд.\n"
+                f"Письма не принимаются. Проверь слоты на релее (:8198) и утечку в relay_gateway.")
+        for b in self.bridges:
+            try:
+                if getattr(b, "telegram_token", "") and getattr(b, "telegram_chat_id", ""):
+                    b.notify_telegram(text)
+                    return
+            except Exception:
+                continue
 
     def _forget(self, ws):
         with self._ws_lock:
@@ -246,3 +295,25 @@ def _setup_logging():
     h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(h)
     logger.propagate = False
+
+
+def main() -> None:
+    """Точка входа отдельного процесса моста (start.sh: python3 -m mailapp.bridge).
+
+    2026-09-11: блока не было вообще, поэтому `python3 -m mailapp.bridge`
+    импортировал модуль и завершался с кодом 0 — процесс моста не жил, подписки
+    на релей не было, и письма не принимались. Держим процесс живым явно.
+    """
+    init_bridge()
+    if _subscriber is None:
+        logging.getLogger("mailbridge").error("мост не стартовал: подписчик не создан")
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        if _subscriber is not None:
+            _subscriber.stop()
+
+
+if __name__ == "__main__":
+    main()

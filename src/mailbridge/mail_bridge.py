@@ -208,7 +208,11 @@ class MailBridge:
             self.last_error_permanent = True
             return False
 
-        message_id = parsed["message_id"] or f"<{uuid.uuid4().hex}@snin-mail.v2.site>"
+        # Дедуп. 2026-09-11: раньше при отсутствии Message-ID генерился случайный
+        # uuid4 — и одно и то же письмо при каждом чтении истории релея считалось
+        # новым (INSERT OR IGNORE не срабатывал, уведомление уходило повторно).
+        # Теперь fallback — id самого события gift-wrap: он стабилен.
+        message_id = parsed["message_id"] or f"<{raw_event.get('id') or uuid.uuid4().hex}@snin-mail.v2.site>"
 
         attachments_json = json.dumps(parsed.get("attachments", []), ensure_ascii=False)
 
@@ -255,10 +259,13 @@ class MailBridge:
 
         if inserted:
             self._log.info("📮 письмо принято: %s — %s", parsed["from"], parsed["subject"])
-            self.notify_telegram(
-                f"📮 Новое письмо [{self.label}]\nОт: {parsed['from']}\n"
-                f"Тема: {parsed['subject']}\n\n{parsed['body'][:300]}"
-            )
+            # suppress_notify: история релея (до EOSE) сохраняется без рассылки в TG,
+            # иначе рестарт моста заливает группу повторами старых писем.
+            if not getattr(self, "suppress_notify", False):
+                self.notify_telegram(
+                    f"📮 Новое письмо [{self.label}]\nОт: {parsed['from']}\n"
+                    f"Тема: {parsed['subject']}\n\n{parsed['body'][:300]}"
+                )
             return True
         self.last_error = "дубликат message_id — письмо уже лежит в ящике"
         self.last_error_permanent = True
